@@ -33,12 +33,8 @@ def get_voice_system_prompt(ctx: RunContext[FarmerContext]) -> str:
     """Get the system prompt for the voice agent."""
     deps = ctx.deps
     farmer_context = deps.get_farmer_context_string()
-    prompt_name = (
-        "voice_system_translation_pipeline_en"
-        if deps.use_translation_pipeline
-        else f"voice_system_{deps.target_lang if deps.target_lang else 'gu'}"
-    )
-    logger.info("Voice prompt selected=%s translation_pipeline=%s", prompt_name, deps.use_translation_pipeline)
+    prompt_name = "voice_system_translation_pipeline_en"
+    logger.info("Voice prompt selected=%s", prompt_name)
     return get_prompt(prompt_name, context={
         'today_date': get_today_date_str(),
         'farmer_context': farmer_context if farmer_context else None

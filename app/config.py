@@ -58,7 +58,6 @@ class Settings(BaseSettings):
 
     # Cache Configuration
     default_cache_ttl: int = 60 * 60 * 24  # 24 hours
-    enable_translation_pipeline: bool = _get_bool_env("ENABLE_TRANSLATION_PIPELINE", False)
     session_owner_ttl_seconds: int = int(os.getenv("SESSION_OWNER_TTL_SECONDS", "120"))
     session_owner_refresh_interval_seconds: int = int(os.getenv("SESSION_OWNER_REFRESH_INTERVAL_SECONDS", "15"))
 

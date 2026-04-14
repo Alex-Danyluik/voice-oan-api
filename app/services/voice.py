@@ -141,6 +141,15 @@ _FRAGMENT_RESPONSES = {
     "en": "I could not understand your question. Please ask your question again.",
 }
 
+_HISTORY_MARKERS = {
+    "greeting": "hello",
+    "fragment": "[fragment]",
+    "low_confidence": "[unclear-user-input]",
+    "pretranslation_failed": "[pretranslation-failed]",
+    "stt_no_audio": "[stt:no-audio]",
+    "stt_unclear": "[stt:unclear-speech]",
+}
+
 
 def _is_fragment_query(query: str) -> bool:
     """Return True if query is too short/garbled to be a real question."""
@@ -212,6 +221,40 @@ def _prepare_voice_output(text: str, lang_code: str) -> str:
     return clean_output_by_language(text, lang_code)
 
 
+def _canonical_history_user_text(kind: str, fallback: str = "") -> str:
+    return _HISTORY_MARKERS.get(kind, fallback or kind)
+
+
+async def _render_text_for_caller(text_en: str, target_lang: str) -> str:
+    """Render English loop text for the caller's language outside the agent loop."""
+    normalized_target = (target_lang or "en").strip().lower()
+    if normalized_target in {"en", "english"}:
+        return _prepare_voice_output(text_en, "en")
+
+    try:
+        translated = await translate_text(
+            text=text_en,
+            source_lang="english",
+            target_lang=normalized_target,
+        )
+        return _prepare_voice_output(translated, normalized_target)
+    except Exception as e:
+        logger.error(
+            "Caller render translation failed; target_lang=%s text=%r error=%s",
+            normalized_target,
+            text_en[:120],
+            e,
+        )
+        return _prepare_voice_output(text_en, "en")
+
+
+def _history_pair(user_text: str, assistant_text: str) -> tuple[ModelRequest, ModelResponse]:
+    return (
+        ModelRequest(parts=[UserPromptPart(content=user_text)]),
+        ModelResponse(parts=[TextPart(content=assistant_text)]),
+    )
+
+
 def should_translate_batch(batch_text: str, word_count: int) -> bool:
     min_words = 15
     max_words = 80
@@ -262,7 +305,6 @@ async def stream_voice_message(
     provider: Optional[Literal['RAYA']] = None,
     process_id: Optional[str] = None,
     user_info: dict = None,
-    use_translation_pipeline: bool = False,
     owner: Optional[SessionRequestOwner] = None,
     http_request: Optional[Request] = None,
 #    background_tasks: BackgroundTasks,
@@ -316,7 +358,7 @@ async def stream_voice_message(
         with _langfuse_session_context(session_id, user_id, process_id):
             requested_source_lang = (source_lang or "gu").strip().lower()
             requested_target_lang = (target_lang or "gu").strip().lower()
-            needs_output_translation = use_translation_pipeline and requested_target_lang in INDIAN_LANGUAGES
+            needs_output_translation = requested_target_lang in INDIAN_LANGUAGES and requested_target_lang not in {"en", "english"}
             nudge_lang = (requested_target_lang or "en").strip().lower()
             has_meaningful_history = _has_meaningful_history(history)
 
@@ -342,8 +384,13 @@ async def stream_voice_message(
                     recent_history_text=recent_text,
                     final_attempt=final_attempt,
                 )
-                stt_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                stt_resp = ModelResponse(parts=[TextPart(content=stt_response)])
+                history_signal = (
+                    _canonical_history_user_text("stt_no_audio")
+                    if stt_signal == "No audio/User is speaking softly"
+                    else _canonical_history_user_text("stt_unclear")
+                )
+                history_response = _FRAGMENT_RESPONSES["en"] if not final_attempt else "Sorry, I still could not hear you clearly. Please try again later."
+                stt_req, stt_resp = _history_pair(history_signal, history_response)
                 await update_message_history(session_id, [*history, stt_req, stt_resp])
                 yield _prepare_voice_output(stt_response, requested_target_lang)
                 return
@@ -361,23 +408,22 @@ async def stream_voice_message(
                     requested_target_lang,
                     TELEPHONY_TERMINATE_CALL_TOKEN["en"],
                 )
-                hold_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                hold_resp = ModelResponse(parts=[TextPart(content=goodbye)])
-                await update_message_history(session_id, [*history, hold_req, hold_resp])
                 yield _prepare_voice_output(goodbye, requested_target_lang)
                 return
 
             # ── Greeting short-circuit ────────────────────────────────────
             # Bare greetings ("hello", "હલો", "હા") should not trigger the
             # full agent pipeline or a nudge.  Respond immediately.
+            # When translation pipeline is active, let greetings flow through
+            # the normal agent pipeline so history stays in English.
             if _is_bare_greeting(query) and not has_meaningful_history:
                 logger.info(
                     "Bare greeting detected; short-circuiting - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query,
                 )
-                greeting_response = _greeting_response(requested_target_lang)
-                greet_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                greet_resp = ModelResponse(parts=[TextPart(content=greeting_response)])
+                greeting_history = _GREETING_RESPONSES["en"]
+                greeting_response = await _render_text_for_caller(greeting_history, requested_target_lang)
+                greet_req, greet_resp = _history_pair(_canonical_history_user_text("greeting"), greeting_history)
                 await update_message_history(session_id, [*history, greet_req, greet_resp])
                 yield _prepare_voice_output(greeting_response, requested_target_lang)
                 return
@@ -390,11 +436,11 @@ async def stream_voice_message(
                     "Fragment query detected; short-circuiting - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query,
                 )
-                frag_response = _FRAGMENT_RESPONSES.get(requested_target_lang, _FRAGMENT_RESPONSES["gu"])
-                frag_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                frag_resp = ModelResponse(parts=[TextPart(content=frag_response)])
+                frag_response_for_history = _FRAGMENT_RESPONSES["en"]
+                frag_response_for_caller = await _render_text_for_caller(frag_response_for_history, requested_target_lang)
+                frag_req, frag_resp = _history_pair(_canonical_history_user_text("fragment"), frag_response_for_history)
                 await update_message_history(session_id, [*history, frag_req, frag_resp])
-                yield _prepare_voice_output(frag_response, requested_target_lang)
+                yield _prepare_voice_output(frag_response_for_caller, requested_target_lang)
                 return
 
             # ── Nudge: arm BEFORE any pre-processing ────────────────────────
@@ -469,10 +515,11 @@ async def stream_voice_message(
             # ── End nudge setup ─────────────────────────────────────────────
 
             processing_query = query
-            processing_lang = requested_source_lang
+            processing_lang = "en"
             pretranslation_confidence = "unknown"
+            history_user_text = query
 
-            if use_translation_pipeline and requested_source_lang in {"gu", "gujarati"}:
+            if requested_source_lang not in {"en", "english"}:
                 logger.info(
                     "Translation pipeline enabled; pretranslating %s -> en with %s",
                     requested_source_lang,
@@ -485,7 +532,7 @@ async def stream_voice_message(
                         text=query,
                         source_lang=requested_source_lang,
                     )
-                    processing_lang = "en"
+                    history_user_text = processing_query or _canonical_history_user_text("low_confidence")
                 except Exception as e:
                     logger.error(
                         "OpenAI pretranslation failed for session_id=%s source_lang=%s model=%s error=%s",
@@ -500,38 +547,41 @@ async def stream_voice_message(
                             text=query,
                             source_lang=requested_source_lang,
                         )
-                        processing_lang = "en"
+                        history_user_text = processing_query or _canonical_history_user_text("low_confidence")
                     except Exception as fallback_error:
                         logger.error(
                             "TranslateGemma pretranslation fallback failed for session_id=%s error=%s",
                             session_id,
                             fallback_error,
                         )
-                        processing_query = query
-                        processing_lang = requested_source_lang
+                        processing_query = ""
+                        pretranslation_confidence = "low"
+                        history_user_text = _canonical_history_user_text("pretranslation_failed")
+
+            else:
+                history_user_text = query
 
             # ── Low-confidence pretranslation filter ─────────────────────
             # When the pretranslation model reports low confidence, the
             # input was likely garbled noise. Ask the farmer to repeat
             # instead of routing a hallucinated translation to the agent.
             if (
-                use_translation_pipeline
-                and requested_source_lang in {"gu", "gujarati"}
+                requested_source_lang not in {"en", "english"}
                 and pretranslation_confidence == "low"
             ):
                 logger.info(
                     "Pretranslation confidence=low; asking to repeat - session_id=%s process_id=%s query=%r translated=%r",
                     session_id, process_id, query, processing_query,
                 )
-                low_conf_resp = _FRAGMENT_RESPONSES.get(requested_target_lang, _FRAGMENT_RESPONSES["gu"])
-                low_conf_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                low_conf_rsp = ModelResponse(parts=[TextPart(content=low_conf_resp)])
+                low_conf_resp_for_history = _FRAGMENT_RESPONSES["en"]
+                low_conf_resp_for_caller = await _render_text_for_caller(low_conf_resp_for_history, requested_target_lang)
+                low_conf_req, low_conf_rsp = _history_pair(
+                    history_user_text or _canonical_history_user_text("low_confidence"),
+                    low_conf_resp_for_history,
+                )
                 await update_message_history(session_id, [*history, low_conf_req, low_conf_rsp])
-                yield _prepare_voice_output(low_conf_resp, requested_target_lang)
+                yield _prepare_voice_output(low_conf_resp_for_caller, requested_target_lang)
                 return
-
-            if use_translation_pipeline and needs_output_translation:
-                processing_lang = "en"
 
             mobile = normalize_phone_to_mobile(user_id)
             farmer_info = ""
@@ -551,7 +601,6 @@ async def stream_voice_message(
                 session_id=session_id,
                 process_id=process_id,
                 farmer_info=farmer_info,
-                use_translation_pipeline=use_translation_pipeline,
             )
 
             message_pairs = "\n\n".join(format_message_pairs(history, 3))
@@ -615,7 +664,7 @@ async def stream_voice_message(
                         if await _request_is_stale("during_agent_stream"):
                             break
 
-                        if not use_translation_pipeline or not needs_output_translation:
+                        if not needs_output_translation:
                             if (
                                 not first_text_chunk_received
                                 and isinstance(chunk, str)
@@ -680,7 +729,7 @@ async def stream_voice_message(
 
                             sentence_buffer = remaining
 
-                    if use_translation_pipeline and needs_output_translation and not await _request_is_stale("before_translation_flush"):
+                    if needs_output_translation and not await _request_is_stale("before_translation_flush"):
                         if translation_batch:
                             batch_text = "".join(translation_batch)
                             async for translated_chunk in _yield_translated_text(batch_text):

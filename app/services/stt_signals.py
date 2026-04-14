@@ -35,6 +35,10 @@ _SIGNALS = {
     _normalize(s): s
     for s in (_SIGNAL_NO_AUDIO, _SIGNAL_UNCLEAR)
 }
+_SIGNALS.update({
+    "[stt:no-audio]": _SIGNAL_NO_AUDIO,
+    "[stt:unclear-speech]": _SIGNAL_UNCLEAR,
+})
 
 
 def detect_stt_signal(query: str) -> Optional[str]:

@@ -103,6 +103,15 @@ def _set_voice_monkeypatches(
         if nudges is not None:
             nudges.append(message)
 
+    async def _render_text_for_caller(text_en, target_lang):
+        if target_lang in {"gu", "gujarati"}:
+            if text_en == "Hello, I am Sarlaben. Please tell me what issue you are facing with your animal.":
+                return "નમસ્તે, હું સરલાબેન છું. તમારા પશુ વિશે કોઈ સમસ્યા હોય તો મને જણાવો."
+            if text_en == "I could not understand your question. Please ask your question again.":
+                return "મને તમારો પ્રશ્ન સમજાયો નથી. કૃપા કરીને તમારો પ્રશ્ન ફરીથી પૂછો."
+            return "મને તમારો પ્રશ્ન સમજાયો નથી. કૃપા કરીને ફરીથી પૂછો."
+        return text_en
+
     def _capture_tool_call_event(event):
         if tool_event_box is not None:
             tool_event_box["event"] = event
@@ -115,6 +124,7 @@ def _set_voice_monkeypatches(
     monkeypatch.setattr(voice_module, "format_message_pairs", lambda history, limit=None: [])
     monkeypatch.setattr(voice_module, "update_message_history", _update_message_history)
     monkeypatch.setattr(voice_module, "send_nudge_message_raya", _send_nudge_message_raya)
+    monkeypatch.setattr(voice_module, "_render_text_for_caller", _render_text_for_caller)
     monkeypatch.setattr(voice_module, "set_tool_call_nudge_event", _capture_tool_call_event)
     monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 0.02, raising=False)
     return voice_module
@@ -127,7 +137,8 @@ async def _collect_stream(
     history: list,
     monkeypatch,
     response_stream: _FakeResponseStream,
-    use_translation_pipeline: bool = False,
+    source_lang: str = "gu",
+    target_lang: str = "gu",
     nudges: list[str] | None = None,
     tool_event_box: dict | None = None,
 ):
@@ -143,14 +154,13 @@ async def _collect_stream(
     async for chunk in voice_module.stream_voice_message(
         query=query,
         session_id=session_id,
-        source_lang="gu",
-        target_lang="gu",
+        source_lang=source_lang,
+        target_lang=target_lang,
         user_id="anonymous",
         history=history,
         provider=None,
         process_id="proc-1",
         user_info={},
-        use_translation_pipeline=use_translation_pipeline,
         owner=None,
         http_request=None,
     ):
@@ -291,55 +301,38 @@ class TestHelperCoverage:
         async def _fallback_pretranslation(*args, **kwargs):
             return "unclear livestock query", "low"
 
-        async def _noop_async(*args, **kwargs):
-            return None
-
-        async def _get_farmer_full_context_string(mobile):
-            return ""
-
         agent_called = False
+        history_store: dict[str, list] = {}
 
-        def _unexpected_run_stream(**kwargs):
+        async def _mark_called():
             nonlocal agent_called
             agent_called = True
-            return _FakeResponseStream()
 
         monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _openai_pretranslation)
         monkeypatch.setattr(voice_module, "translate_to_english_with_structured_fallback", _fallback_pretranslation)
-        monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", _unexpected_run_stream)
-        monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
-        monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
-        monkeypatch.setattr(voice_module, "clean_message_history_for_openai", lambda history: history)
-        monkeypatch.setattr(voice_module, "trim_history", lambda history, **kwargs: history)
-        monkeypatch.setattr(voice_module, "format_message_pairs", lambda history, limit=None: [])
-        monkeypatch.setattr(voice_module, "update_message_history", _noop_async)
-        monkeypatch.setattr(voice_module, "send_nudge_message_raya", _noop_async)
-        monkeypatch.setattr(voice_module, "set_tool_call_nudge_event", lambda event: SimpleNamespace())
-        monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 999.0, raising=False)
 
-        async def _run():
-            chunks = []
-            async for chunk in voice_module.stream_voice_message(
+        output, saved_history = asyncio.run(
+            _collect_stream(
                 query="કાળજ (વેચાવ)",
                 session_id="fallback-low-confidence",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(on_enter=_mark_called),
                 source_lang="gu",
                 target_lang="gu",
-                user_id="anonymous",
-                history=[],
-                provider=None,
-                process_id="proc-1",
-                user_info={},
-                use_translation_pipeline=True,
-                owner=None,
-                http_request=None,
-            ):
-                if isinstance(chunk, str):
-                    chunks.append(chunk)
-            return "".join(chunks)
+            )
+        )
 
-        output = asyncio.run(_run())
         assert "ફરીથી" in output or "સમજાયો નથી" in output
         assert agent_called is False
+        saved_text = " ".join(
+            getattr(part, "content", "")
+            for msg in saved_history
+            for part in getattr(msg, "parts", [])
+            if isinstance(getattr(part, "content", None), str)
+        )
+        assert "કાળજ" not in saved_text
+        assert "[unclear-user-input]" in saved_text or "I could not understand your question" in saved_text
 
 
 class TestMultiTurnFlows:
@@ -354,6 +347,14 @@ class TestMultiTurnFlows:
             )
         )
         assert "નમસ્તે" in first_output or "Hello" in first_output
+        greeting_history_text = " ".join(
+            getattr(part, "content", "")
+            for msg in history
+            for part in getattr(msg, "parts", [])
+            if isinstance(getattr(part, "content", None), str)
+        )
+        assert "Hello, I am Sarlaben." in greeting_history_text
+        assert "નમસ્તે" not in greeting_history_text
 
         agent_called = {"value": False}
 
@@ -434,6 +435,14 @@ class TestMultiTurnFlows:
         assert "ફરીથી" in outputs[0]
         assert "ફરીથી" in outputs[1]
         assert "પછીથી ફરી પ્રયાસ કરો" in outputs[2] or "થોડા સમય પછી ફરી કોલ કરો" in outputs[2]
+        history_text = " ".join(
+            getattr(part, "content", "")
+            for msg in history
+            for part in getattr(msg, "parts", [])
+            if isinstance(getattr(part, "content", None), str)
+        )
+        assert "[stt:no-audio]" in history_text
+        assert "No audio/User is speaking softly" not in history_text
 
     def test_tool_triggered_nudge_fires_once_before_first_chunk(self, monkeypatch):
         nudges: list[str] = []

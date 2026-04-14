@@ -125,7 +125,6 @@ async def _collect_stream(query: str, *, session_id: str, history: list, monkeyp
         provider=None,
         process_id="proc-1",
         user_info={},
-        use_translation_pipeline=False,
         owner=None,
         http_request=None,
     ):
@@ -149,7 +148,8 @@ async def _collect_live_stream(
     session_id: str,
     history: list,
     monkeypatch,
-    use_translation_pipeline: bool = False,
+    source_lang: str = "gu",
+    target_lang: str = "gu",
 ):
     from app.services import voice as voice_module
 
@@ -169,14 +169,13 @@ async def _collect_live_stream(
     async for chunk in voice_module.stream_voice_message(
         query=query,
         session_id=session_id,
-        source_lang="gu",
-        target_lang="gu",
+        source_lang=source_lang,
+        target_lang=target_lang,
         user_id="anonymous",
         history=history,
         provider=None,
         process_id="proc-live",
         user_info={},
-        use_translation_pipeline=use_translation_pipeline,
         owner=None,
         http_request=None,
     ):

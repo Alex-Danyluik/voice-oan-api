@@ -25,13 +25,11 @@ async def voice_endpoint(
     session_id is used for message history and Langfuse Sessions: same ID groups all agent runs for one conversation.
     """
     session_id = request.session_id or str(uuid.uuid4())
-    use_translation_pipeline = settings.enable_translation_pipeline
-
     logger.info(
         f"Voice request received - session_id: {session_id}, user_id: {request.user_id}, "
         f"source_lang: {request.source_lang}, "
         f"target_lang: {request.target_lang}, provider: {request.provider}, process_id: {request.process_id}, "
-        f"use_translation_pipeline: {use_translation_pipeline}, query: {request.query}"
+        f"query: {request.query}"
     )
     owner = await claim_session_request_ownership(session_id)
     logger.info(
@@ -56,7 +54,6 @@ async def voice_endpoint(
             provider=request.provider,
             process_id=request.process_id,
             user_info=user_info,
-            use_translation_pipeline=use_translation_pipeline,
             owner=owner,
             http_request=http_request,
         ),
