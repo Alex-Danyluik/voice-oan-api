@@ -14,6 +14,7 @@ from pydantic_ai import ModelRetry, RunContext
 
 from agents.deps import FarmerContext
 from agents.tools.terms import normalize_text_with_glossary
+from app.observability import start_observation
 from helpers.utils import get_logger
 
 logger = get_logger(__name__)
@@ -391,21 +392,65 @@ async def search_documents(
         if exclude_reference_chunks and capabilities.get("has_is_reference_filter", False):
             search_params["filter_string"] = "is_reference:false"
 
-        try:
-            results = await asyncio.to_thread(_marqo_search_sync, endpoint_url, index_name, search_params)
-        except Exception:
-            if search_mode == "hybrid":
-                logger.warning("Hybrid search failed, retrying with tensor search for query '%s'", query)
-                fallback_params = {
-                    "q": effective_query,
-                    "limit": search_limit,
-                    "search_method": "tensor",
-                }
-                if exclude_reference_chunks and capabilities.get("has_is_reference_filter", False):
-                    fallback_params["filter_string"] = "is_reference:false"
-                results = await asyncio.to_thread(_marqo_search_sync, endpoint_url, index_name, fallback_params)
-            else:
-                raise
+        with start_observation(
+            "marqo_search",
+            input={"query": query, "search_params": search_params},
+            metadata={
+                "endpoint_url": endpoint_url,
+                "index_name": index_name,
+                "search_mode": search_mode,
+                "query_expansion_profile": query_expansion_profile,
+                "tool": "search_documents",
+            },
+        ) as observation:
+            try:
+                results = await asyncio.to_thread(_marqo_search_sync, endpoint_url, index_name, search_params)
+            except Exception as e:
+                if search_mode == "hybrid":
+                    logger.warning("Hybrid search failed, retrying with tensor search for query '%s'", query)
+                    fallback_params = {
+                        "q": effective_query,
+                        "limit": search_limit,
+                        "search_method": "tensor",
+                    }
+                    if exclude_reference_chunks and capabilities.get("has_is_reference_filter", False):
+                        fallback_params["filter_string"] = "is_reference:false"
+                    if observation is not None:
+                        observation.update(
+                            metadata={
+                                "endpoint_url": endpoint_url,
+                                "index_name": index_name,
+                                "search_mode": search_mode,
+                                "fallback_mode": "tensor",
+                                "initial_error": str(e),
+                                "tool": "search_documents",
+                            }
+                        )
+                    results = await asyncio.to_thread(_marqo_search_sync, endpoint_url, index_name, fallback_params)
+                else:
+                    if observation is not None:
+                        observation.update(
+                            output={"error": str(e)},
+                            metadata={
+                                "endpoint_url": endpoint_url,
+                                "index_name": index_name,
+                                "search_mode": search_mode,
+                                "tool": "search_documents",
+                            },
+                        )
+                    raise
+
+            if observation is not None:
+                observation.update(
+                    output={"hit_count": len(results)},
+                    metadata={
+                        "endpoint_url": endpoint_url,
+                        "index_name": index_name,
+                        "search_mode": search_mode,
+                        "query_expansion_profile": query_expansion_profile,
+                        "tool": "search_documents",
+                    },
+                )
 
         rerank_mode = (os.getenv("MARQO_RERANK_MODE", "bm25lite") or "bm25lite").strip().lower()
         if rerank_mode not in {"off", "none", "disabled"}:

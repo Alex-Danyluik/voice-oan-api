@@ -3,6 +3,7 @@ import contextvars
 import random
 import httpx
 from typing import Dict, Any, Optional
+from app.observability import start_observation
 from helpers.utils import get_logger
 from app.config import settings
 
@@ -80,12 +81,22 @@ async def send_nudge_message_raya(message: str, session_id: str, process_id: str
             nudge_url,
             payload,
         )
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                nudge_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
+        with start_observation(
+            "send_nudge_message_raya",
+            input={"session_id": session_id, "process_id": process_id, "message": message},
+            metadata={"url": nudge_url, "component": "nudge_api"},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    nudge_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+            if observation is not None:
+                observation.update(
+                    output={"status_code": response.status_code},
+                    metadata={"url": nudge_url, "component": "nudge_api"},
+                )
         response_body = response.text
         logger.info(
             "Nudge API response; session_id=%s process_id=%s status=%s body=%s",

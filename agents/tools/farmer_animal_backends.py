@@ -13,6 +13,7 @@ import httpx
 
 from agents.models.farmer import FarmerRecord, AnimalRecord
 from agents.models.ai_call import AICallRequestModel, AICallResponseModel
+from app.observability import start_observation
 from helpers.utils import get_logger
 
 _logger = get_logger(__name__)
@@ -41,11 +42,18 @@ async def fetch_farmer_amulpashudhan(mobile: str, token: str) -> Optional[List[D
     """Returns list of farmer records or None on 204/error/empty."""
     url = f"{BASE_AMULPASHUDHAN}/GetFarmerDetailsByMobile?mobileNumber={mobile}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(
-                url,
-                headers={"accept": "application/json", "Authorization": f"Bearer {token}"},
-            )
+        with start_observation(
+            "fetch_farmer_amulpashudhan",
+            input={"mobile": mobile},
+            metadata={"provider": "amulpashudhan", "url": url},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(
+                    url,
+                    headers={"accept": "application/json", "Authorization": f"Bearer {token}"},
+                )
+            if observation is not None:
+                observation.update(output={"status_code": r.status_code}, metadata={"provider": "amulpashudhan", "url": url})
         if r.status_code == 204 or not (r.text or "").strip():
             return None
         if r.status_code != 200:
@@ -64,12 +72,19 @@ async def fetch_farmer_herdman(mobile: str, token: str) -> Optional[List[Dict[st
     """Returns list of farmer records or None on error/empty."""
     url = f"{BASE_HERDMAN}/get-amul-farmer"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(
-                url,
-                params={"mobileno": mobile},
-                headers={"accept": "application/json", "api-token": f"Bearer {token}"},
-            )
+        with start_observation(
+            "fetch_farmer_herdman",
+            input={"mobile": mobile},
+            metadata={"provider": "herdman", "url": url},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(
+                    url,
+                    params={"mobileno": mobile},
+                    headers={"accept": "application/json", "api-token": f"Bearer {token}"},
+                )
+            if observation is not None:
+                observation.update(output={"status_code": r.status_code}, metadata={"provider": "herdman", "url": url})
         if r.status_code != 200 or not (r.text or "").strip():
             return None
         data = json.loads(r.text)
@@ -109,11 +124,18 @@ async def fetch_animal_amulpashudhan(tag_no: str, token: str) -> Optional[Dict[s
     """Returns single animal dict or None on 204/error/empty."""
     url = f"{BASE_AMULPASHUDHAN}/GetAnimalDetailsByTagNo?tagNo={tag_no}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(
-                url,
-                headers={"accept": "application/json", "Authorization": f"Bearer {token}"},
-            )
+        with start_observation(
+            "fetch_animal_amulpashudhan",
+            input={"tag_no": tag_no},
+            metadata={"provider": "amulpashudhan", "url": url},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(
+                    url,
+                    headers={"accept": "application/json", "Authorization": f"Bearer {token}"},
+                )
+            if observation is not None:
+                observation.update(output={"status_code": r.status_code}, metadata={"provider": "amulpashudhan", "url": url})
         if r.status_code == 204 or not (r.text or "").strip():
             return None
         if r.status_code != 200:
@@ -153,12 +175,19 @@ async def fetch_animal_herdman(tag_no: str, token: str) -> Optional[Dict[str, An
     """Returns single animal dict (canonical keys) or None on error/empty."""
     url = f"{BASE_HERDMAN}/get-amul-animal"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(
-                url,
-                params={"TagID": tag_no},
-                headers={"accept": "application/json", "api-token": f"Bearer {token}"},
-            )
+        with start_observation(
+            "fetch_animal_herdman",
+            input={"tag_no": tag_no},
+            metadata={"provider": "herdman", "url": url},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(
+                    url,
+                    params={"TagID": tag_no},
+                    headers={"accept": "application/json", "api-token": f"Bearer {token}"},
+                )
+            if observation is not None:
+                observation.update(output={"status_code": r.status_code}, metadata={"provider": "herdman", "url": url})
         if r.status_code != 200 or not (r.text or "").strip():
             return None
         data = json.loads(r.text)
@@ -194,17 +223,24 @@ async def create_ai_call_api(
     """Creates an artificial insemination call and returns the assigned technician."""
     api_url = f"{BASE_AMULPASHUDHAN}/CreateAICall"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                api_url,
-                params=request.to_query_params(),
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            response.raise_for_status()
-            _logger.info(
-                "[CreateAICall(%s,%s,%s,%s)] :: Response received.",
-                request.union_code, request.society_code, request.farmer_code, request.species.value,
-            )
+        with start_observation(
+            "create_ai_call_api",
+            input=request.to_query_params(),
+            metadata={"provider": "amulpashudhan", "url": api_url},
+        ) as observation:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    api_url,
+                    params=request.to_query_params(),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                response.raise_for_status()
+                _logger.info(
+                    "[CreateAICall(%s,%s,%s,%s)] :: Response received.",
+                    request.union_code, request.society_code, request.farmer_code, request.species.value,
+                )
+            if observation is not None:
+                observation.update(output={"status_code": response.status_code}, metadata={"provider": "amulpashudhan", "url": api_url})
         response_json = response.json()
         if not isinstance(response_json, dict):
             raise Exception("Not a valid dict in response.")
