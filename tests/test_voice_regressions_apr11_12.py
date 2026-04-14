@@ -274,6 +274,8 @@ class TestHelperCoverage:
         ("દૂધમાં ચરબી ઓછી છે.", "ફેટ"),
         ("ગાય ગર્ભવતી છે.", "ગાભણ"),
         ("સારા બળદ નો ઉપયોગ કરો.", "બુલ"),
+        ("મને બૈડું ઠંડું લાગે છે.", "શરીર ઠંડું લાગે છે"),
+        ("પશુના બૈડા પર સોજો છે.", "પીઠ"),
     ])
     def test_current_gu_term_policy_still_holds(self, text, expected):
         result = normalize_gu(text)

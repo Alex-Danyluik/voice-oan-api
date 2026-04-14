@@ -40,7 +40,7 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use farmer-preferred Gujarati livestock terms.",
     "Address the caller respectfully with gender-neutral 'આપ' forms; never infer the caller's gender.",
     "Sarlaben must always use feminine self-reference in Gujarati.",
-    "Never use 'બૈડા'. Prefer 'પીઠ' for back/flank context and 'શરીર' for general body context.",
+    "Never use slang body terms like 'બૈડા/બૈડું/બરડા/બરડું'. Prefer 'પીઠ' for back/flank context and 'શરીર' for general body context.",
     "Prefer 'બાવલું' over 'પાહો' for udder context.",
     "Prefer 'ધાર' over 'ટીપાં' for milk streams.",
     "Use 'ગાભણ' for pregnant livestock context.",
@@ -111,10 +111,63 @@ GU_TERM_POLICY = _load_gu_term_policy()
 GU_POLICY_REPLACEMENTS = _build_gu_policy_replacements(GU_TERM_POLICY)
 GU_POST_REPLACEMENTS = GU_POST_REPLACEMENTS_BASE + GU_POLICY_REPLACEMENTS
 
+GU_WORD_BOUNDARY_START = r"(?<![\u0A80-\u0AFF])"
+GU_WORD_BOUNDARY_END = r"(?![\u0A80-\u0AFF])"
+GU_BODY_SLANG_VARIANTS = r"(?:બૈડા|બૈડું|બૈડુ|બરડા|બરડું|બરડુ)"
+GU_BODY_BACK_SUFFIXES = r"(?:માં|મા|પર)"
+GU_BODY_BACK_POSTPOSITIONS = r"(?:પર|માં|મા|પાછળ)"
+GU_BODY_AGREEMENT_FIXES = [
+    (r"શરીર\s+ઠંડા\s+લાગે\s+છે", "શરીર ઠંડું લાગે છે"),
+    (r"શરીર\s+ઠંડી\s+લાગે\s+છે", "શરીર ઠંડું લાગે છે"),
+    (r"પીઠ\s+ઠંડા\s+લાગે\s+છે", "પીઠ ઠંડી લાગે છે"),
+    (r"પીઠ\s+ઠંડું\s+લાગે\s+છે", "પીઠ ઠંડી લાગે છે"),
+]
+
 
 def _fix_dandas(text: str) -> str:
     """Replace Devanagari dandas (।) with periods in TranslateGemma output."""
     return text.replace("।", ".")
+
+
+def _normalize_gu_body_terms(text: str) -> str:
+    """Normalize slang Gujarati body terms with contextual mapping."""
+    out = text
+
+    # Back/flank context: slang + attached locative suffix.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})(?P<suffix>{GU_BODY_BACK_SUFFIXES}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠ{m.group('suffix')}",
+        out,
+    )
+
+    # Back/flank context: slang + spaced postposition/phrase.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+(?P<post>{GU_BODY_BACK_POSTPOSITIONS}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠ {m.group('post')}",
+        out,
+    )
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+ની\s+બાજુ{GU_WORD_BOUNDARY_END}",
+        "પીઠની બાજુ",
+        out,
+    )
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+ના\s+ભાગ(?P<post>{GU_BODY_BACK_SUFFIXES}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠના ભાગ{m.group('post')}",
+        out,
+    )
+
+    # Default: generic body context.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})(?P<suffix>ના|ની|નું|નો|ને|થી)?{GU_WORD_BOUNDARY_END}",
+        lambda m: f"શરીર{m.group('suffix') or ''}",
+        out,
+    )
+
+    for pat, repl in GU_BODY_AGREEMENT_FIXES:
+        out = re.sub(pat, repl, out)
+
+    return out
 
 
 def _post_normalize_gu_translation(
@@ -126,6 +179,7 @@ def _post_normalize_gu_translation(
     if target_lang.lower() not in ("gujarati", "gu"):
         return text
     out = text
+    out = _normalize_gu_body_terms(out)
     for pat, repl in GU_POST_REPLACEMENTS:
         out = re.sub(pat, repl, out)
     # collapse extra spaces introduced by removals

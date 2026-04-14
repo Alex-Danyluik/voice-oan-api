@@ -79,9 +79,13 @@ class TestForbiddenReplacements:
         ("ઘીમાં પકાવવું", "ઘી બનાવવું"),
         # Physical/scientific — [58] શારીરિક→ભૌતિક
         ("શારીરિક", "ભૌતિક"),
-        # Body terms — avoid colloquial/dialectal "બૈડા/બરડા"
+        # Body terms — avoid colloquial/dialectal "બૈડા/બૈડું/બરડા/બરડું"
         ("બૈડા", "શરીર"),
+        ("બૈડું", "શરીર"),
+        ("બૈડુ", "શરીર"),
         ("બરડા", "શરીર"),
+        ("બરડું", "શરીર"),
+        ("બરડુ", "શરીર"),
         # Medical — [162] ચૂભો→ચીરો, [168] તણાવ→માનસિક આઘાત
         ("ચૂભો", "ચીરો"),
         ("તણાવ", "માનસિક આઘાત"),
@@ -147,8 +151,29 @@ class TestForbiddenInContext:
         """Use શરીર/પીઠ-style vocabulary, not બૈડા."""
         text = "પશુના બૈડા પર સોજો છે."
         result = normalize_gu(text)
-        assert "શરીર" in result
+        assert "પીઠ" in result
         assert "બૈડા" not in result
+
+    def test_body_term_singular_defaults_to_sharir(self):
+        """Generic body sense should normalize to શરીર with correct agreement."""
+        text = "મને બૈડું ઠંડું લાગે છે."
+        result = normalize_gu(text)
+        assert "શરીર ઠંડું લાગે છે" in result
+        assert "બૈડું" not in result
+
+    def test_body_term_back_context_uses_pith(self):
+        """Back-location context should normalize to પીઠ."""
+        text = "ગાયના બરડામાં દુખાવો છે."
+        result = normalize_gu(text)
+        assert "પીઠમાં દુખાવો" in result
+        assert "બરડામાં" not in result
+
+    def test_body_term_agreement_fixes(self):
+        """Common agreement mismatches after normalization should be corrected."""
+        text = "મને શરીર ઠંડા લાગે છે અને પીઠ ઠંડું લાગે છે."
+        result = normalize_gu(text)
+        assert "શરીર ઠંડું લાગે છે" in result
+        assert "પીઠ ઠંડી લાગે છે" in result
 
     def test_butter_word(self):
         """[130] મખાણ→માખણ."""
@@ -359,7 +384,7 @@ class TestPolicyCompleteness:
         """Key terms from Shridhar feedback should be caught by post-processing."""
         critical = [
             "સ્તન", "પાહો", "ચરબી", "ઘન પદાર્થો", "જંતુઓ",
-            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી", "બૈડા",
+            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી", "બૈડા", "બૈડું",
         ]
         for term in critical:
             result = normalize_gu(f"ગાયમાં {term} છે.")
