@@ -109,7 +109,16 @@ def _set_identity_monkeypatches(monkeypatch, *, response_stream: _FakeResponseSt
     monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 0.02, raising=False)
 
 
-async def _collect_stream(query: str, *, session_id: str, history: list, monkeypatch, response_stream: _FakeResponseStream):
+async def _collect_stream(
+    query: str,
+    *,
+    session_id: str,
+    history: list,
+    monkeypatch,
+    response_stream: _FakeResponseStream,
+    source_lang: str = "gu",
+    target_lang: str = "gu",
+):
     from app.services import voice as voice_module
 
     history_store: dict[str, list] = {}
@@ -118,8 +127,8 @@ async def _collect_stream(query: str, *, session_id: str, history: list, monkeyp
     async for chunk in voice_module.stream_voice_message(
         query=query,
         session_id=session_id,
-        source_lang="gu",
-        target_lang="gu",
+        source_lang=source_lang,
+        target_lang=target_lang,
         user_id="anonymous",
         history=history,
         provider=None,
@@ -351,6 +360,118 @@ def test_repeated_stt_failure_hits_retry_ceiling(monkeypatch):
     assert _contains_any(outputs[2], ["સંભળાતો નથી", "ફરીથી"])
     assert _contains_any(outputs[3], ["પછીથી ફરી પ્રયાસ કરો", "later", "try again later"])
     assert _contains_none(outputs[3], ["ફરીથી બોલો", "please repeat", "say that again"])
+
+
+def test_pretranslation_total_failure_asks_to_repeat_without_agent_call(monkeypatch):
+    response_stream = _FakeResponseStream(chunks=["should not run"], delay=0.0)
+    history_store: dict[str, list] = {}
+    _set_identity_monkeypatches(monkeypatch, response_stream=response_stream, history_store=history_store)
+
+    from agents import voice as voice_agent_module
+    from app.services import voice as voice_module
+
+    async def _raise_primary(*args, **kwargs):
+        raise RuntimeError("primary pretranslation unavailable")
+
+    async def _raise_fallback(*args, **kwargs):
+        raise RuntimeError("fallback pretranslation unavailable")
+
+    def _unexpected_run_stream(**kwargs):
+        raise AssertionError("agent should not run when pretranslation fails completely")
+
+    monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _raise_primary)
+    monkeypatch.setattr(voice_module, "translate_to_english_with_structured_fallback", _raise_fallback)
+    monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", _unexpected_run_stream)
+
+    output, saved_history = asyncio.run(
+        _collect_stream(
+            query="મારી ગાયને તાવ છે",
+            session_id="integration-pretranslation-failure",
+            history=[],
+            monkeypatch=monkeypatch,
+            response_stream=response_stream,
+        )
+    )
+
+    assert _contains_any(output, ["પ્રશ્ન ફરીથી પૂછો", "સમજાયો નથી", "please ask"])
+    assert saved_history
+    assert saved_history[-2].parts[0].content == "[pretranslation-failed]"
+    assert saved_history[-1].parts[0].content == "I could not understand your question. Please ask your question again."
+
+
+def test_live_greeting_response_has_no_channel_hallucination(monkeypatch):
+    output, _ = asyncio.run(
+        _collect_live_stream(
+            query="હેલો",
+            session_id="live-greeting-no-channel-hallucination",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert output
+    assert _contains_any(output, ["નમસ્તે", "સરલાબેન", "hello"])
+    assert _contains_none(output, ["લખો", "ચેટ", "મેસેજ", "write", "chat", "message"])
+
+
+def test_live_numeric_output_keeps_units_speakable(monkeypatch):
+    response_stream = _FakeResponseStream(
+        chunks=["Give 3-4 kg feed for 2-3 days and 15 liters of water every day."],
+        delay=0.0,
+    )
+    history_store: dict[str, list] = {}
+    _set_identity_monkeypatches(monkeypatch, response_stream=response_stream, history_store=history_store)
+
+    output, _ = asyncio.run(
+        _collect_stream(
+            query="Give 3-4 kg feed for 2-3 days and 15 liters of water every day.",
+            session_id="integration-numeric-speakable",
+            history=[],
+            monkeypatch=monkeypatch,
+            response_stream=response_stream,
+            source_lang="en",
+            target_lang="gu",
+        )
+    )
+
+    assert output
+    assert _contains_none(output, ["kg", "કિ.ગ્રા.", "--", "[", "]", "(", ")"])
+    assert _contains_any(output, ["કિલોગ્રામ", "લિટર"])
+
+
+def test_live_domain_response_avoids_phone_channel_hallucinations(monkeypatch):
+    from agents.voice import voice_agent
+    from agents.tools.common import fire_tool_call_nudge
+
+    search_terms_tool = voice_agent._function_tools["search_terms"]
+    search_documents_tool = voice_agent._function_tools["search_documents"]
+
+    async def _fake_search_terms(term: str, max_results: int = 10, threshold: float = 0.7, language=None):
+        fire_tool_call_nudge()
+        return "fever -> fever"
+
+    async def _fake_search_documents(ctx, query: str, top_k: int = 12):
+        fire_tool_call_nudge()
+        return (
+            "If a cow has fever, keep it hydrated, keep it in shade, "
+            "and contact a veterinarian promptly."
+        )
+
+    monkeypatch.setattr(search_terms_tool, "function", _fake_search_terms)
+    monkeypatch.setattr(search_documents_tool, "function", _fake_search_documents)
+
+    output, _ = asyncio.run(
+        _collect_live_stream(
+            query="મારી ગાયને તાવ છે, શું કરવું?",
+            session_id="live-domain-no-channel-hallucination",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert output
+    assert _contains_none(output, ["લખો", "ચેટ", "મેસેજ", "write", "chat", "message"])
+    assert _contains_none(output, ["```", "[", "]", "(", ")", "<", ">"])
 
 
 def test_live_domain_query_invokes_retrieval_tools(monkeypatch):
