@@ -14,6 +14,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -140,6 +141,48 @@ def _contains_any(text: str, needles: list[str]) -> bool:
 
 def _contains_none(text: str, needles: list[str]) -> bool:
     return not _contains_any(text, needles)
+
+
+async def _collect_live_stream(
+    query: str,
+    *,
+    session_id: str,
+    history: list,
+    monkeypatch,
+    use_translation_pipeline: bool = False,
+):
+    from app.services import voice as voice_module
+
+    history_store: dict[str, list] = {}
+
+    async def _get_farmer_full_context_string(mobile):
+        return ""
+
+    async def _update_message_history(session_id, messages):
+        history_store[session_id] = messages
+
+    monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
+    monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
+    monkeypatch.setattr(voice_module, "update_message_history", _update_message_history)
+
+    chunks: list[str] = []
+    async for chunk in voice_module.stream_voice_message(
+        query=query,
+        session_id=session_id,
+        source_lang="gu",
+        target_lang="gu",
+        user_id="anonymous",
+        history=history,
+        provider=None,
+        process_id="proc-live",
+        user_info={},
+        use_translation_pipeline=use_translation_pipeline,
+        owner=None,
+        http_request=None,
+    ):
+        if isinstance(chunk, str):
+            chunks.append(chunk)
+    return "".join(chunks), history_store.get(session_id, [])
 
 
 def test_fixture_contains_integration_scenarios():
@@ -308,3 +351,137 @@ def test_repeated_stt_failure_hits_retry_ceiling(monkeypatch):
     assert _contains_any(outputs[1], ["સંભળાતો નથી", "ફરીથી"])
     assert _contains_any(outputs[2], ["સંભળાતો નથી", "ફરીથી"])
     assert _contains_none(outputs[3], ["ફરીથી", "સંભળાતો નથી", "repeat", "again"])
+
+
+def test_live_domain_query_invokes_retrieval_tools(monkeypatch):
+    from agents.voice import voice_agent
+    from agents.tools.common import fire_tool_call_nudge
+
+    tool_calls: list[tuple[str, str]] = []
+    search_terms_tool = voice_agent._function_tools["search_terms"]
+    search_documents_tool = voice_agent._function_tools["search_documents"]
+
+    async def _fake_search_terms(term: str, max_results: int = 10, threshold: float = 0.7, language=None):
+        fire_tool_call_nudge()
+        tool_calls.append(("search_terms", term))
+        return "fever -> fever"
+
+    async def _fake_search_documents(ctx, query: str, top_k: int = 12):
+        fire_tool_call_nudge()
+        tool_calls.append(("search_documents", query))
+        return "If a cow has fever, keep it hydrated and contact a veterinarian promptly."
+
+    monkeypatch.setattr(search_terms_tool, "function", _fake_search_terms)
+    monkeypatch.setattr(search_documents_tool, "function", _fake_search_documents)
+
+    output, _ = asyncio.run(
+        _collect_live_stream(
+            query="મારી ગાયને તાવ છે, શું કરવું?",
+            session_id="live-tool-boundary-domain",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert output
+    assert any(name == "search_documents" for name, _ in tool_calls)
+
+
+def test_live_identity_turn_does_not_invoke_retrieval_tools(monkeypatch):
+    from agents.voice import voice_agent
+
+    tool_calls: list[str] = []
+    search_terms_tool = voice_agent._function_tools["search_terms"]
+    search_documents_tool = voice_agent._function_tools["search_documents"]
+    create_ai_call_tool = voice_agent._function_tools["create_ai_call"]
+
+    async def _fake_search_terms(*args, **kwargs):
+        tool_calls.append("search_terms")
+        return "unexpected"
+
+    async def _fake_search_documents(*args, **kwargs):
+        tool_calls.append("search_documents")
+        return "unexpected"
+
+    async def _fake_create_ai_call(*args, **kwargs):
+        tool_calls.append("create_ai_call")
+        return "unexpected"
+
+    monkeypatch.setattr(search_terms_tool, "function", _fake_search_terms)
+    monkeypatch.setattr(search_documents_tool, "function", _fake_search_documents)
+    monkeypatch.setattr(create_ai_call_tool, "function", _fake_create_ai_call)
+
+    output, _ = asyncio.run(
+        _collect_live_stream(
+            query="તમારું નામ શું છે?",
+            session_id="live-tool-boundary-identity",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert output
+    assert _contains_any(output, ["સરલાબેન", "Sarlaben"])
+    assert tool_calls == []
+
+
+def test_live_tool_triggered_nudge_only_on_retrieval_path(monkeypatch):
+    from agents.voice import voice_agent
+    from agents.tools.common import fire_tool_call_nudge
+    from app.services import voice as voice_module
+
+    nudges: list[str] = []
+    search_terms_tool = voice_agent._function_tools["search_terms"]
+    search_documents_tool = voice_agent._function_tools["search_documents"]
+    create_ai_call_tool = voice_agent._function_tools["create_ai_call"]
+
+    async def _capture_nudge(message, session_id, process_id=None):
+        nudges.append(message)
+
+    async def _fake_search_terms(term: str, max_results: int = 10, threshold: float = 0.7, language=None):
+        fire_tool_call_nudge()
+        await asyncio.sleep(0.05)
+        return "fever -> fever"
+
+    async def _fake_search_documents(ctx, query: str, top_k: int = 12):
+        fire_tool_call_nudge()
+        await asyncio.sleep(0.05)
+        return "If a cow has fever, keep it hydrated and contact a veterinarian promptly."
+
+    async def _fake_create_ai_call(*args, **kwargs):
+        fire_tool_call_nudge()
+        await asyncio.sleep(0.05)
+        return "unexpected"
+
+    monkeypatch.setattr(search_terms_tool, "function", _fake_search_terms)
+    monkeypatch.setattr(search_documents_tool, "function", _fake_search_documents)
+    monkeypatch.setattr(create_ai_call_tool, "function", _fake_create_ai_call)
+    monkeypatch.setattr(voice_module, "send_nudge_message_raya", _capture_nudge)
+    monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 999.0, raising=False)
+
+    domain_output, _ = asyncio.run(
+        _collect_live_stream(
+            query="મારી ગાયને તાવ છે, શું કરવું?",
+            session_id="live-tool-nudge-domain",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert domain_output
+    assert len(nudges) <= 1
+    assert len(nudges) == 1
+
+    nudges.clear()
+
+    identity_output, _ = asyncio.run(
+        _collect_live_stream(
+            query="તમારું નામ શું છે?",
+            session_id="live-tool-nudge-identity",
+            history=[],
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert identity_output
+    assert nudges == []

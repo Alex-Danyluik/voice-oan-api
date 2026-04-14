@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelRequest, TextPart, UserPromptPart
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -43,7 +43,15 @@ def normalize_gu(text: str) -> str:
 
 
 class _FakeResponseStream:
+    def __init__(self, chunks: list[str] | None = None, new_messages: list | None = None, delay: float = 0.0, on_enter=None):
+        self._chunks = chunks or []
+        self._new_messages = new_messages or []
+        self._delay = delay
+        self._on_enter = on_enter
+
     async def __aenter__(self):
+        if self._on_enter is not None:
+            await self._on_enter()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -51,12 +59,104 @@ class _FakeResponseStream:
 
     def stream_text(self, delta: bool = True):
         async def _gen():
-            if False:
-                yield ""
+            for chunk in self._chunks:
+                if self._delay:
+                    await asyncio.sleep(self._delay)
+                yield chunk
         return _gen()
 
     def new_messages(self):
-        return []
+        return self._new_messages
+
+
+def _make_agent_messages(user_text: str, assistant_text: str) -> list:
+    return [
+        ModelRequest(parts=[UserPromptPart(content=user_text)]),
+        SimpleNamespace(parts=[TextPart(content=assistant_text)]),
+    ]
+
+
+async def _noop_async(*args, **kwargs):
+    return None
+
+
+def _set_voice_monkeypatches(
+    monkeypatch,
+    *,
+    response_stream: _FakeResponseStream,
+    history_store: dict,
+    nudges: list[str] | None = None,
+    tool_event_box: dict | None = None,
+):
+    from agents import voice as voice_agent_module
+    from app.services import voice as voice_module
+
+    monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", lambda **kwargs: response_stream)
+
+    async def _get_farmer_full_context_string(mobile):
+        return ""
+
+    async def _update_message_history(session_id, messages):
+        history_store[session_id] = messages
+
+    async def _send_nudge_message_raya(message, session_id, process_id=None):
+        if nudges is not None:
+            nudges.append(message)
+
+    def _capture_tool_call_event(event):
+        if tool_event_box is not None:
+            tool_event_box["event"] = event
+        return SimpleNamespace()
+
+    monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
+    monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
+    monkeypatch.setattr(voice_module, "clean_message_history_for_openai", lambda history: history)
+    monkeypatch.setattr(voice_module, "trim_history", lambda history, **kwargs: history)
+    monkeypatch.setattr(voice_module, "format_message_pairs", lambda history, limit=None: [])
+    monkeypatch.setattr(voice_module, "update_message_history", _update_message_history)
+    monkeypatch.setattr(voice_module, "send_nudge_message_raya", _send_nudge_message_raya)
+    monkeypatch.setattr(voice_module, "set_tool_call_nudge_event", _capture_tool_call_event)
+    monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 0.02, raising=False)
+    return voice_module
+
+
+async def _collect_stream(
+    query: str,
+    *,
+    session_id: str,
+    history: list,
+    monkeypatch,
+    response_stream: _FakeResponseStream,
+    use_translation_pipeline: bool = False,
+    nudges: list[str] | None = None,
+    tool_event_box: dict | None = None,
+):
+    history_store: dict[str, list] = {}
+    voice_module = _set_voice_monkeypatches(
+        monkeypatch,
+        response_stream=response_stream,
+        history_store=history_store,
+        nudges=nudges,
+        tool_event_box=tool_event_box,
+    )
+    chunks: list[str] = []
+    async for chunk in voice_module.stream_voice_message(
+        query=query,
+        session_id=session_id,
+        source_lang="gu",
+        target_lang="gu",
+        user_id="anonymous",
+        history=history,
+        provider=None,
+        process_id="proc-1",
+        user_info={},
+        use_translation_pipeline=use_translation_pipeline,
+        owner=None,
+        http_request=None,
+    ):
+        if isinstance(chunk, str):
+            chunks.append(chunk)
+    return "".join(chunks), history_store.get(session_id, [])
 
 
 class TestApr11Apr12Fixture:
@@ -240,3 +340,157 @@ class TestHelperCoverage:
         output = asyncio.run(_run())
         assert "ફરીથી" in output or "સમજાયો નથી" in output
         assert agent_called is False
+
+
+class TestMultiTurnFlows:
+    def test_greeting_then_domain_query_reaches_agent(self, monkeypatch):
+        first_output, history = asyncio.run(
+            _collect_stream(
+                query="hello",
+                session_id="multiturn-greeting-domain",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(chunks=["ignored"]),
+            )
+        )
+        assert "નમસ્તે" in first_output or "Hello" in first_output
+
+        agent_called = {"value": False}
+
+        async def _mark_called():
+            agent_called["value"] = True
+
+        second_output, _ = asyncio.run(
+            _collect_stream(
+                query="મારી ગાયને તાવ છે",
+                session_id="multiturn-greeting-domain",
+                history=history,
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(
+                    chunks=["ગાયને તાવ છે તો પશુચિકિત્સકનો સંપર્ક કરો."],
+                    new_messages=_make_agent_messages("મારી ગાયને તાવ છે", "ગાયને તાવ છે તો પશુચિકિત્સકનો સંપર્ક કરો."),
+                    on_enter=_mark_called,
+                ),
+            )
+        )
+
+        assert agent_called["value"] is True
+        assert "નમસ્તે" not in second_output
+        assert "પશુચિકિત્સક" in second_output
+
+    def test_affirmative_with_meaningful_history_does_not_restart_as_greeting(self, monkeypatch):
+        history = _make_agent_messages("ગાય માટે કે ભેંસ માટે?", "ગાય માટે કે ભેંસ માટે?")
+        agent_called = {"value": False}
+
+        async def _mark_called():
+            agent_called["value"] = True
+
+        output, _ = asyncio.run(
+            _collect_stream(
+                query="હા",
+                session_id="multiturn-affirmative-history",
+                history=history,
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(
+                    chunks=["સમજાયું, ગાય માટે નોંધ્યું."],
+                    new_messages=_make_agent_messages("હા", "સમજાયું, ગાય માટે નોંધ્યું."),
+                    on_enter=_mark_called,
+                ),
+            )
+        )
+
+        assert agent_called["value"] is True
+        assert "નમસ્તે" not in output
+        assert "સમજાયું" in output
+
+    def test_repeated_stt_failures_hit_retry_ceiling_on_third_attempt(self, monkeypatch):
+        from app.services import voice as voice_module
+
+        history: list = []
+        outputs: list[str] = []
+        final_flags: list[bool] = []
+
+        async def _fake_generate(signal: str, target_lang: str, recent_history_text: str = "", final_attempt: bool = False) -> str:
+            final_flags.append(final_attempt)
+            if final_attempt:
+                return "માફ કરશો, હજુ તમારો અવાજ સંભળાતો નથી. કૃપા કરીને પછીથી ફરી પ્રયાસ કરો."
+            return "માફ કરશો, મને તમારો અવાજ સંભળાતો નથી. કૃપા કરીને ફરીથી બોલો."
+
+        monkeypatch.setattr(voice_module, "generate_stt_signal_response", _fake_generate)
+
+        for _ in range(3):
+            output, history = asyncio.run(
+                _collect_stream(
+                    query="No audio/User is speaking softly",
+                    session_id="multiturn-stt-ceiling",
+                    history=history,
+                    monkeypatch=monkeypatch,
+                    response_stream=_FakeResponseStream(),
+                )
+            )
+            outputs.append(output)
+
+        assert final_flags == [False, False, True]
+        assert "ફરીથી" in outputs[0]
+        assert "ફરીથી" in outputs[1]
+        assert "પછીથી ફરી પ્રયાસ કરો" in outputs[2] or "થોડા સમય પછી ફરી કોલ કરો" in outputs[2]
+
+    def test_tool_triggered_nudge_fires_once_before_first_chunk(self, monkeypatch):
+        nudges: list[str] = []
+        tool_event_box: dict = {}
+
+        async def _trigger_tool_event():
+            await asyncio.sleep(0)
+            tool_event_box["event"].set()
+
+        response_stream = _FakeResponseStream(
+            chunks=["હું તપાસીને કહું છું."],
+            delay=0.03,
+            on_enter=_trigger_tool_event,
+        )
+
+        output, _ = asyncio.run(
+            _collect_stream(
+                query="મારી ગાયને શું કરવું",
+                session_id="multiturn-tool-nudge",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=response_stream,
+                nudges=nudges,
+                tool_event_box=tool_event_box,
+            )
+        )
+
+        assert "હું તપાસીને" in output
+        assert len(nudges) == 1
+        assert "રાહ જુઓ" in nudges[0] or "તપાસી રહી છું" in nudges[0]
+
+    def test_closing_turn_does_not_append_feedback_across_turns(self, monkeypatch):
+        first_output, history = asyncio.run(
+            _collect_stream(
+                query="આભાર, બસ છે",
+                session_id="multiturn-closing",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(
+                    chunks=["ચોક્કસ, આપના પશુ માટે હું અહીં છું."],
+                    new_messages=_make_agent_messages("આભાર, બસ છે", "ચોક્કસ, આપના પશુ માટે હું અહીં છું."),
+                ),
+            )
+        )
+
+        assert "1 થી 5" not in first_output
+        assert all("1 થી 5" not in getattr(part, "content", "") for msg in history for part in getattr(msg, "parts", []))
+
+        second_output, second_history = asyncio.run(
+            _collect_stream(
+                query="hello",
+                session_id="multiturn-closing",
+                history=history,
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(chunks=["ignored"]),
+            )
+        )
+
+        assert "feedback" not in second_output.lower()
+        assert all("કેટલો ઉપયોગી" not in getattr(part, "content", "") for msg in second_history for part in getattr(msg, "parts", []))

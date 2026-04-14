@@ -318,6 +318,7 @@ async def stream_voice_message(
             requested_target_lang = (target_lang or "gu").strip().lower()
             needs_output_translation = use_translation_pipeline and requested_target_lang in INDIAN_LANGUAGES
             nudge_lang = (requested_target_lang or "en").strip().lower()
+            has_meaningful_history = _has_meaningful_history(history)
 
             # ── STT signal handling (no-audio / unclear speech) ─────────────
             # These are not real user messages — skip translation & agent,
@@ -369,7 +370,7 @@ async def stream_voice_message(
             # ── Greeting short-circuit ────────────────────────────────────
             # Bare greetings ("hello", "હલો", "હા") should not trigger the
             # full agent pipeline or a nudge.  Respond immediately.
-            if _is_bare_greeting(query) and not _has_meaningful_history(history):
+            if _is_bare_greeting(query) and not has_meaningful_history:
                 logger.info(
                     "Bare greeting detected; short-circuiting - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query,
@@ -384,7 +385,7 @@ async def stream_voice_message(
             # ── Fragment short-circuit ────────────────────────────────────
             # Very short / garbled input (≤3 chars) that isn't a greeting or
             # STT signal — ask the farmer to repeat instead of routing to agent.
-            if _is_fragment_query(query):
+            if _is_fragment_query(query) and not has_meaningful_history:
                 logger.info(
                     "Fragment query detected; short-circuiting - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query,
@@ -414,6 +415,7 @@ async def stream_voice_message(
                         "Nudge armed; session_id=%s process_id=%s elapsed=%.3fs remaining=%.3fs timeout=%.3fs",
                         session_id,
                         process_id,
+                        elapsed,
                         remaining,
                         settings.nudge_timeout_seconds,
                     )
