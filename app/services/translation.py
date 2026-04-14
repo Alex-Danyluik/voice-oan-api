@@ -40,6 +40,7 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use farmer-preferred Gujarati livestock terms.",
     "Address the caller respectfully with gender-neutral 'આપ' forms; never infer the caller's gender.",
     "Sarlaben must always use feminine self-reference in Gujarati.",
+    "Never use 'બૈડા'. Prefer 'પીઠ' for back/flank context and 'શરીર' for general body context.",
     "Prefer 'બાવલું' over 'પાહો' for udder context.",
     "Prefer 'ધાર' over 'ટીપાં' for milk streams.",
     "Use 'ગાભણ' for pregnant livestock context.",

@@ -79,6 +79,9 @@ class TestForbiddenReplacements:
         ("ઘીમાં પકાવવું", "ઘી બનાવવું"),
         # Physical/scientific — [58] શારીરિક→ભૌતિક
         ("શારીરિક", "ભૌતિક"),
+        # Body terms — avoid colloquial/dialectal "બૈડા/બરડા"
+        ("બૈડા", "શરીર"),
+        ("બરડા", "શરીર"),
         # Medical — [162] ચૂભો→ચીરો, [168] તણાવ→માનસિક આઘાત
         ("ચૂભો", "ચીરો"),
         ("તણાવ", "માનસિક આઘાત"),
@@ -139,6 +142,13 @@ class TestForbiddenInContext:
         text = "જંતુઓ દ્વારા ચેપ લાગે છે."
         result = normalize_gu(text)
         assert "બેક્ટેરિયા" in result
+
+    def test_body_term_replacement(self):
+        """Use શરીર/પીઠ-style vocabulary, not બૈડા."""
+        text = "પશુના બૈડા પર સોજો છે."
+        result = normalize_gu(text)
+        assert "શરીર" in result
+        assert "બૈડા" not in result
 
     def test_butter_word(self):
         """[130] મખાણ→માખણ."""
@@ -349,7 +359,7 @@ class TestPolicyCompleteness:
         """Key terms from Shridhar feedback should be caught by post-processing."""
         critical = [
             "સ્તન", "પાહો", "ચરબી", "ઘન પદાર્થો", "જંતુઓ",
-            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી",
+            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી", "બૈડા",
         ]
         for term in critical:
             result = normalize_gu(f"ગાયમાં {term} છે.")
