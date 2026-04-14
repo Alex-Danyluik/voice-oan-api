@@ -10,16 +10,18 @@ import regex
 # from fastapi import BackgroundTasks
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 
-from agents.voice import voice_agent
+from pydantic_ai.usage import UsageLimits
+
+from agents.voice import voice_agent, voice_agent_signed_in
 from agents.tools.farmer import normalize_phone_to_mobile
-from agents.services.farmer_context import get_farmer_full_context_string
+from agents.services.farmer_cache import get_or_fetch_farmer_data
 from agents.tools.common import (
     get_timeout_nudge_message,
     get_tool_nudge_message,
     send_nudge_message_raya,
     set_tool_call_nudge_event,
 )
-from helpers.utils import get_logger, clean_output_by_language
+from helpers.utils import get_logger, clean_output_by_language, get_today_date_str
 from app.config import settings
 from app.utils import (
     update_message_history,
@@ -47,6 +49,7 @@ from app.services.translation import (
 # NOTE: Removing telemetry for now.
 # from app.tasks.telemetry import send_telemetry
 from agents.deps import FarmerContext
+from agents.models.farmer import FarmerDataEnvelope, FarmerRecord
 
 logger = get_logger(__name__)
 
@@ -253,6 +256,74 @@ def _history_pair(user_text: str, assistant_text: str) -> tuple[ModelRequest, Mo
         ModelRequest(parts=[UserPromptPart(content=user_text)]),
         ModelResponse(parts=[TextPart(content=assistant_text)]),
     )
+
+
+def _is_signed_in_session(user_info: Optional[dict], user_id: str) -> bool:
+    if user_id and user_id != "anonymous":
+        return True
+    return bool(user_info)
+
+
+def _build_runtime_context_request(deps: FarmerContext) -> ModelRequest:
+    tool_groups = ["retrieval", "booking"]
+    if deps.signed_in and deps.mobile:
+        tool_groups.append("signed-in-farmer-data")
+    runtime_context = deps.get_runtime_context_message()
+    context_lines = [
+        "Runtime context for this turn:",
+        f"- Today date: {get_today_date_str()}",
+        runtime_context.replace("Runtime context for this turn:\n", "", 1),
+        f"- Tool groups in this run: {', '.join(tool_groups)}",
+    ]
+    return ModelRequest(parts=[UserPromptPart(content="\n".join(context_lines))])
+
+
+def _extract_farmer_tags(records: list[FarmerRecord]) -> list[str]:
+    tags: list[str] = []
+    for record in records:
+        raw = record.tagNumbers or record.tagNo or ""
+        if not raw:
+            continue
+        for tag in str(raw).split(","):
+            cleaned = tag.strip()
+            if cleaned and cleaned not in tags:
+                tags.append(cleaned)
+    return tags
+
+
+def _build_compact_farmer_summary(envelope: Optional[FarmerDataEnvelope]) -> str:
+    if envelope is None or not envelope.farmers:
+        return ""
+
+    first = envelope.farmers[0]
+    tags = _extract_farmer_tags(envelope.farmers)
+    societies = sorted({r.societyName for r in envelope.farmers if r.societyName})
+
+    lines = [
+        f"- Farmer records matched: {len(envelope.farmers)}",
+        f"- Farmer data source: {envelope.source or 'unknown'}",
+    ]
+    if first.farmerName:
+        lines.append(f"- Farmer name: {first.farmerName}")
+    if societies:
+        lines.append(f"- Societies: {', '.join(societies[:3])}")
+    if first.farmerCode:
+        lines.append(f"- Farmer code available: yes")
+    union_code = first.model_dump().get("unionCode") or first.model_dump().get("union_code")
+    society_code = first.model_dump().get("societyCode") or first.model_dump().get("society_code")
+    if union_code:
+        lines.append(f"- Union code: {union_code}")
+    if society_code:
+        lines.append(f"- Society code: {society_code}")
+    if first.farmerCode:
+        lines.append(f"- Farmer code: {first.farmerCode}")
+    if first.totalAnimals is not None:
+        lines.append(f"- Total animals: {first.totalAnimals}")
+    if tags:
+        preview = ", ".join(tags[:8])
+        extra = f" (+{len(tags) - 8} more)" if len(tags) > 8 else ""
+        lines.append(f"- Known animal tags: {preview}{extra}")
+    return "\n".join(lines)
 
 
 def should_translate_batch(batch_text: str, word_count: int) -> bool:
@@ -584,13 +655,20 @@ async def stream_voice_message(
                 return
 
             mobile = normalize_phone_to_mobile(user_id)
+            signed_in = _is_signed_in_session(user_info, user_id)
             farmer_info = ""
             if mobile:
                 try:
-                    farmer_info = await get_farmer_full_context_string(mobile)
-                    logger.info(f"Farmer context loaded for mobile {mobile}, length={len(farmer_info)}")
+                    envelope = await get_or_fetch_farmer_data(mobile)
+                    farmer_info = _build_compact_farmer_summary(envelope)
+                    logger.info(
+                        "Farmer summary loaded for mobile %s source=%s summary_chars=%s",
+                        mobile,
+                        getattr(envelope, "source", None),
+                        len(farmer_info),
+                    )
                 except Exception as e:
-                    logger.warning(f"Failed to load farmer context for mobile {mobile}: {e}")
+                    logger.warning(f"Failed to load farmer summary for mobile {mobile}: {e}")
 
             logger.info(f"User info: {user_info}")
             deps = FarmerContext(
@@ -601,11 +679,14 @@ async def stream_voice_message(
                 session_id=session_id,
                 process_id=process_id,
                 farmer_info=farmer_info,
+                signed_in=signed_in,
+                mobile=mobile,
             )
 
             message_pairs = "\n\n".join(format_message_pairs(history, 3))
             logger.info(f"Message pairs: {message_pairs}")
             user_message = deps.get_user_message()
+            runtime_context_request = _build_runtime_context_request(deps)
             logger.info(f"Running agent with user message: {user_message}")
 
             cleaned_history = clean_message_history_for_openai(history)
@@ -622,11 +703,15 @@ async def stream_voice_message(
                 include_tool_calls=True,
             )
             logger.info(f"Trimmed history length: {len(trimmed_history)} messages")
+            model_input_history = [runtime_context_request, *trimmed_history]
+            active_agent = voice_agent_signed_in if (signed_in and mobile) else voice_agent
+            usage_limits = UsageLimits(request_limit=6 if (signed_in and mobile) else 4)
 
-            async with voice_agent.run_stream(
+            async with active_agent.run_stream(
                 user_prompt=user_message,
-                message_history=trimmed_history,
+                message_history=model_input_history,
                 deps=deps,
+                usage_limits=usage_limits,
             ) as response_stream:
                 stream_iter = response_stream.stream_text(delta=True)
                 first_text_chunk_received = False
