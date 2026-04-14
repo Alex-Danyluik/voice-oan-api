@@ -14,7 +14,7 @@ import asyncio
 from pathlib import Path
 from typing import Literal, Optional
 from openai import AsyncOpenAI
-from helpers.utils import get_logger
+from helpers.utils import get_logger, normalize_voice_output
 from dotenv import load_dotenv
 from agents.tools.terms import get_mini_glossary_for_text, get_ambiguity_hints_for_query, TERM_PAIRS
 from app.config import settings
@@ -38,24 +38,21 @@ _openai_client: Optional[AsyncOpenAI] = None
 
 GU_PREFERRED_TRANSLATION_RULES = [
     "Use farmer-preferred Gujarati livestock terms.",
+    "Address the caller respectfully with gender-neutral 'આપ' forms; never infer the caller's gender.",
+    "Sarlaben must always use feminine self-reference in Gujarati.",
     "Prefer 'બાવલું' over 'પાહો' for udder context.",
     "Prefer 'ધાર' over 'ટીપાં' for milk streams.",
     "Use 'ગાભણ' for pregnant livestock context.",
-    "Do not output editorial markers like 'red colour' or formatting instructions.",
-    "The speaker is a woman named Sarlaben (સરલાબેન). All first-person verbs and participles must use feminine gender (e.g. 'શકી' not 'શક્યો', 'રહી છું' not 'રહ્યો છું').",
     "Use 'ફેટ' for fat/milk-fat (not 'ચરબી').",
     "Use 'એસ.એન.એફ.' for SNF (not 'ઘન પદાર્થો').",
     "Use 'બેક્ટેરિયા' for bacteria (not 'જંતુઓ').",
     "Use 'ધણ' for herd (not 'ટોળું').",
-    "Use 'આંચળનો સોજો' for mastitis (pick one term, never combine two). Never use 'આઉ નો સોજો' AND 'બાવલાનો સોજો' together.",
+    "Use one mastitis term consistently: 'આંચળનો સોજો'. Do not combine 'આઉ નો સોજો' and 'બાવલાનો સોજો'.",
     "NEVER use 'સ્તન' for animal udder/teat. Use 'આંચળ' for teat and 'બાવલું' or 'આઉ' for udder.",
     "Use 'બુલ' for bull (not 'બળદ' which means bullock/ox).",
     "For bloat (આફરો), use 'ફુલેલા' (distended/puffed) not 'સોજેલા' (swollen) when describing the flank.",
-    "Avoid repeating 'અને તેને' multiple times in one sentence. Vary sentence structure.",
-    "Use 'માખણ' for butter (not 'મખાણ').",
-    "Use 'મલાઈ' for cream (not 'માલઈ').",
-    "Use 'વલોણું/વલોણાથી' for churning (not 'મથણી/મથણીથી').",
-    "Use 'ઘી બનાવવું' for making ghee (not 'ઘીમાં પકાવવું' which means cooking in ghee).",
+    "Avoid brackets, markdown, list scaffolding, and repeated parenthetical restatements.",
+    "Use 'માખણ' for butter, 'મલાઈ' for cream, 'વલોણું/વલોણાથી' for churning, and 'ઘી બનાવવું' for making ghee.",
     "Use 'ચીરો' for incision/cut (not 'ચૂભો' which is not a real word).",
     "Use 'માનસિક આઘાત' for mental trauma/stress in animals (not 'તણાવ').",
     "Use 'ફીણ' for foam (not 'ફી').",
@@ -133,6 +130,7 @@ def _post_normalize_gu_translation(
     # collapse extra spaces introduced by removals
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
+    out = normalize_voice_output(out, target_lang, replace_slash=False)
     return out.strip() if strip_outer else out
 
 
@@ -208,7 +206,7 @@ def _format_translation_prompt(
         f"Your goal is to accurately convey the meaning and nuances of the original {source_name} text "
         f"while adhering to {target_name} grammar, vocabulary, and cultural sensitivities.\n"
         f"Produce only the {target_name} translation, without any additional explanations or commentary.\n"
-        f"Preserve newlines, paragraph breaks, and list structure (bullets, numbered items, markdown) exactly as in the source."
+        f"Prefer clear spoken language over literal formatting. Do not preserve markdown, bullets, numbered lists, or bracketed duplicates if they hurt voice clarity."
     )
     if mini_glossary and mini_glossary.strip():
         lines = mini_glossary.strip().splitlines()
@@ -310,6 +308,7 @@ async def translate_text(
                         translated_text,
                         target_lang,
                     )
+                    translated_text = normalize_voice_output(translated_text, target_lang)
                     logger.info(f"Translation successful ({len(text)} -> {len(translated_text)} chars)")
                     return translated_text
 
@@ -351,6 +350,7 @@ async def translate_text(
                         translated_text,
                         target_lang,
                     )
+                    translated_text = normalize_voice_output(translated_text, target_lang)
                     observation.update(output=translated_text)
                     logger.info(f"Translation successful ({len(text)} -> {len(translated_text)} chars)")
                     return translated_text
@@ -434,8 +434,9 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
 
     system_content = (
         f"{domain_preamble}\n"
-        "Translate the user's message to English. "
+        "Translate the user's message to clean spoken English. "
         "Respond with JSON: {\"translation\": \"...\", \"confidence\": \"high\" or \"low\"}.\n\n"
+        "Do not preserve markdown, bullets, bracketed duplicates, or other formatting clutter.\n"
         "Set confidence to \"low\" when the input is garbled noise, random syllables, or "
         "you are largely guessing the meaning rather than translating recognizable words. "
         "Set confidence to \"high\" when you can identify real words and the translation "
@@ -672,6 +673,7 @@ async def translate_text_stream_fast(
                                             target_lang,
                                             strip_outer=False,
                                         )
+                                        content = normalize_voice_output(content, target_lang)
                                         translated_parts.append(content)
                                         yield content
                                 except json.JSONDecodeError:
@@ -731,6 +733,7 @@ async def translate_text_stream_fast(
                                             target_lang,
                                             strip_outer=False,
                                         )
+                                        content = normalize_voice_output(content, target_lang)
                                         translated_parts.append(content)
                                         yield content
                                 except json.JSONDecodeError:

@@ -1,18 +1,18 @@
 {
     "hold_messages": {
         "en": [
-            "Sure, I can help you. Hold on, this won't take long.",
-            "Alright, I am fetching that information. Please wait a moment.",
-            "I am getting an update from the system. Stay on the line for a moment.",
-            "Yes, give me a moment, I will let you know shortly.",
-            "Sure, I am fetching the information right now. Stay on the line."
+            "I'm getting back to you, please wait.",
+            "Please wait a moment while I check.",
+            "One moment, I'm on it.",
+            "I'll be right back with the answer.",
+            "Please hold on for a moment."
         ],
         "gu": [
-            "ચોક્કસ, હું તમને મદદ કરી શકું છું. થોડી રાહ જુઓ, આમાં વધારે સમય નહીં લાગે.",
-            "બરાબર, હું આ માહિતી મેળવી રહી છું. કૃપા કરીને થોડી વાર રાહ જુઓ.",
-            "હું સિસ્ટમમાંથી અપડેટ મેળવી રહી છું. થોડા સમય સુધી લાઇન પર રહો.",
-            "હા, થોડો સમય આપો, થોડીજ વારમાં તમને જણાવું.",
-            "ચોક્કસ, હું હાલ માહિતી મેળવી રહી છું. થોડી વાર લાઇન પર રહો."
+            "હું જવાબ લઈને પાછી આવું છું, કૃપા કરીને થોડી રાહ જુઓ.",
+            "થોડું રાહ જુઓ, હું તપાસી રહી છું.",
+            "એક ક્ષણ, હું જોઈ રહી છું.",
+            "હું થોડી વાર માં પાછી આવું છું.",
+            "કૃપા કરીને થોડી રાહ જુઓ."
         ]
     }
 }

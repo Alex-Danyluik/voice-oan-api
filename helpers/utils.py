@@ -170,6 +170,106 @@ def remove_redundant_angle_brackets(text: str) -> str:
 
     return pattern.sub(lambda m: m.group('term'), text)
 
+def remove_redundant_square_brackets(text: str) -> str:
+    """Collapse "X [X]" → "X" for any Unicode text."""
+    text = ud.normalize("NFC", text)
+
+    pattern = re.compile(
+        r'''
+        (?P<term>
+            [^\s\[\]]+
+            (?:\s+[^\s\[\]]+)*
+        )
+        \s*\[\s*
+        (?P=term)
+        \s*\]
+        ''',
+        flags=re.UNICODE | re.VERBOSE,
+    )
+
+    return pattern.sub(lambda m: m.group('term'), text)
+
+def _replace_voice_abbreviations(text: str, lang_code: str) -> str:
+    """Expand abbreviations that are awkward for voice output."""
+    lang = (lang_code or "").strip().lower()
+
+    if lang == "gu":
+        replacements = [
+            (r"(?i)\bkg\b", "કિલોગ્રામ"),
+            (r"(?i)\bkgs\b", "કિલોગ્રામ"),
+            (r"(?i)\bml\b", "મિલીલીટર"),
+            (r"(?i)\bl\b", "લિટર"),
+            (r"(?i)\bkm\b", "કિલોમીટર"),
+            (r"(?i)\bcm\b", "સેન્ટીમીટર"),
+            (r"(?i)કિ\.?\s*ગ્રા\.?", "કિલોગ્રામ"),
+            (r"(?i)(?<!\w)ગ્રા\.?(?!\w)", "ગ્રામ"),
+            (r"(?i)મિ\.?\s*લી\.?", "મિલીલીટર"),
+            (r"(?i)%", " ટકા"),
+            (r"(?i)°\s*c", " ડિગ્રી સેલ્સિયસ"),
+        ]
+    else:
+        replacements = [
+            (r"(?i)\bkg\b", "kilograms"),
+            (r"(?i)\bkgs\b", "kilograms"),
+            (r"(?i)\bml\b", "milliliters"),
+            (r"(?i)\bl\b", "liters"),
+            (r"(?i)\bkm\b", "kilometers"),
+            (r"(?i)\bcm\b", "centimeters"),
+            (r"(?i)%", " percent"),
+            (r"(?i)°\s*c", " degrees Celsius"),
+        ]
+
+    out = text
+    for pattern, repl in replacements:
+        out = re.sub(pattern, repl, out)
+    return out
+
+def normalize_voice_output(
+    text: str,
+    lang_code: str | None,
+    *,
+    replace_slash: bool = True,
+) -> str:
+    """Normalize model output for voice playback before language filtering."""
+    if not text:
+        return text
+
+    lang = (lang_code or "").strip().lower()
+    out = ud.normalize("NFC", text)
+
+    # Strip markdown and structural noise that should never be spoken.
+    out = out.replace("**", "").replace("__", "").replace("`", "").replace("~", "")
+    out = re.sub(r"(?m)^\s*#+\s*", "", out)
+    out = re.sub(r"(?m)^\s*(?:[-*•]+|\d+[.)])\s*", "", out)
+
+    out = _replace_voice_abbreviations(out, lang)
+
+    # Normalize common punctuation clutter.
+    out = re.sub(r"\.{3,}", ".", out)
+    out = re.sub(r"([!?])\1+", r"\1", out)
+    out = re.sub(r"([,;:])\1+", r"\1", out)
+    out = re.sub(r"\s*([,;:!?])\s*", r"\1 ", out)
+
+    # Replace slash-separated alternatives with spoken language.
+    if replace_slash:
+        if lang == "gu":
+            out = out.replace("/", " અથવા ")
+        else:
+            out = out.replace("/", " or ")
+
+    # Collapse repeated bracketed copies before removing remaining brackets.
+    out = remove_redundant_parenthetical(out)
+    out = remove_redundant_square_brackets(out)
+    out = remove_redundant_angle_brackets(out)
+
+    # Brackets are visual syntax, not voice content.
+    out = re.sub(r"[\[\]{}()<>]", " ", out)
+
+    # Flatten line breaks into spoken text.
+    out = re.sub(r"\s*\n+\s*", " ", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return out.strip()
+
 def post_process_translation(translation: str) -> str:
     """Post process translation.
     
@@ -249,8 +349,7 @@ def clean_output_by_language(text: str, lang_code: str | None) -> str:
     if not text:
         return text
 
-    # Normalize common separator: treat "/" as the word " or " for all languages
-    text = text.replace("/", " or ")
+    text = normalize_voice_output(text, lang_code)
 
     lang = (lang_code or "").strip().lower()
     # Basic punctuation to always allow

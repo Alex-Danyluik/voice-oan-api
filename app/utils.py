@@ -1,4 +1,3 @@
-import json
 import uuid
 from dataclasses import dataclass
 from typing import List
@@ -14,7 +13,6 @@ from pydantic_ai.messages import (
 from pydantic_core import to_jsonable_python
 
 HISTORY_SUFFIX = "_SVA"
-FEEDBACK_STATE_SUFFIX = "_feedback_state"
 SESSION_OWNER_SUFFIX = "_active_request"
 SESSION_EPOCH_SUFFIX = "_request_epoch"
 
@@ -120,70 +118,6 @@ async def set_cache(key: str, value, ttl: int = DEFAULT_CACHE_TTL):
     return True
 
 
-async def get_feedback_state(session_id: str) -> dict:
-    """Get feedback state for a session. Returns dict with initiated, rating_received, trigger."""
-    state = await get_cache(f"{session_id}_{FEEDBACK_STATE_SUFFIX}")
-    if state:
-        return state
-    return {"initiated": False, "rating_received": False, "trigger": None}
-
-
-async def set_feedback_initiated(session_id: str, trigger: str) -> None:
-    """Mark that feedback question has been asked. State expires per feedback_state_ttl if no rating received."""
-    await set_cache(
-        f"{session_id}_{FEEDBACK_STATE_SUFFIX}",
-        {"initiated": True, "rating_received": False, "trigger": trigger},
-        ttl=settings.feedback_state_ttl
-    )
-
-
-async def clear_feedback_initiated(session_id: str) -> None:
-    """Clear 'waiting for feedback' state so the next user message is treated as a normal agent turn.
-    Use when the user's response is not valid feedback (e.g. they asked a question instead of 1-5)."""
-    await set_cache(
-        f"{session_id}_{FEEDBACK_STATE_SUFFIX}",
-        {"initiated": False, "rating_received": False, "trigger": None},
-        ttl=settings.feedback_state_ttl
-    )
-
-
-def extract_conversation_events_from_messages(messages: list) -> list:
-    """
-    Extract signal_conversation_state events from message history.
-    Returns list of event strings: conversation_closing, user_frustration, in_progress.
-    """
-    events = []
-    for msg in messages or []:
-        for part in getattr(msg, "parts", []) or []:
-            if getattr(part, "part_kind", "") != "tool-call":
-                continue
-            tool_name = getattr(part, "tool_name", None) or getattr(part, "name", None)
-            if tool_name != "signal_conversation_state":
-                continue
-            raw_args = getattr(part, "args", None)
-            if isinstance(raw_args, dict):
-                args = raw_args
-            elif isinstance(raw_args, str):
-                try:
-                    parsed = json.loads(raw_args)
-                    args = parsed if isinstance(parsed, dict) else {}
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            else:
-                args = {}
-            event = args.get("event") if isinstance(args, dict) else None
-            if event in ("conversation_closing", "user_frustration", "in_progress"):
-                events.append(event)
-    return events
-
-
-async def set_feedback_rating_received(session_id: str) -> None:
-    """Mark that feedback rating has been received."""
-    state = await get_feedback_state(session_id)
-    state = {**state, "rating_received": True}
-    await set_cache(f"{session_id}_{FEEDBACK_STATE_SUFFIX}", state, ttl=settings.feedback_state_ttl)
-
-
 async def _get_message_history(session_id: str) -> List[ModelMessage]:
     """Get or initialize message history."""
     message_history = await get_cache(f"{session_id}_{HISTORY_SUFFIX}")
@@ -223,7 +157,6 @@ def filter_out_tool_calls(messages: List[ModelMessage]) -> List[ModelMessage]:
             msg_copy.parts = filtered_parts
             filtered_messages.append(msg_copy)            
     return filtered_messages
-
 
 
 def get_message_pairs(history: List[ModelMessage], limit: int = None) -> List[List]:

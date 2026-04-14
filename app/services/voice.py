@@ -13,7 +13,12 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, Te
 from agents.voice import voice_agent
 from agents.tools.farmer import normalize_phone_to_mobile
 from agents.services.farmer_context import get_farmer_full_context_string
-from agents.tools.common import get_random_nudge_message, send_nudge_message_raya, set_tool_call_nudge_event
+from agents.tools.common import (
+    get_timeout_nudge_message,
+    get_tool_nudge_message,
+    send_nudge_message_raya,
+    set_tool_call_nudge_event,
+)
 from helpers.utils import get_logger, clean_output_by_language
 from app.config import settings
 from app.utils import (
@@ -21,23 +26,16 @@ from app.utils import (
     trim_history,
     format_message_pairs,
     clean_message_history_for_openai,
-    get_feedback_state,
-    set_feedback_initiated,
-    set_feedback_rating_received,
-    clear_feedback_initiated,
-    extract_conversation_events_from_messages,
     SessionRequestOwner,
     is_session_request_owner,
     refresh_session_request_ownership,
     release_session_request_ownership,
 )
-from app.services.feedback import (
-    get_feedback_ack,
-    get_feedback_question,
-    parse_feedback_with_llm,
-    send_feedback,
+from app.services.stt_signals import (
+    detect_stt_signal,
+    generate_stt_signal_response,
+    count_consecutive_stt_signals,
 )
-from app.services.stt_signals import detect_stt_signal, generate_stt_signal_response
 from app.services.translation import (
     INDIAN_LANGUAGES,
     OPENAI_PRETRANSLATION_MODEL,
@@ -192,6 +190,11 @@ def _greeting_response(target_lang: str) -> str:
     return _GREETING_RESPONSES.get(target_lang, _GREETING_RESPONSES["gu"])
 
 
+def _prepare_voice_output(text: str, lang_code: str) -> str:
+    """Normalize model output for voice delivery."""
+    return clean_output_by_language(text, lang_code)
+
+
 def should_translate_batch(batch_text: str, word_count: int) -> bool:
     min_words = 15
     max_words = 80
@@ -294,51 +297,6 @@ async def stream_voice_message(
 
     try:
         with _langfuse_session_context(session_id, user_id, process_id):
-            if await _request_is_stale("before_feedback_check"):
-                return
-
-            feedback_state = await get_feedback_state(session_id)
-            if feedback_state.get("initiated") and not feedback_state.get("rating_received"):
-                target_lang = (target_lang or "gu").strip().lower()
-                trigger = feedback_state.get("trigger") or "conversation_closing"
-                parsed = await parse_feedback_with_llm(query, target_lang)
-                is_feedback = parsed.get("is_feedback") is True
-                rating = parsed.get("rating") if isinstance(parsed.get("rating"), int) else None
-                valid_rating = rating is not None and 1 <= rating <= 5
-
-                if is_feedback and valid_rating:
-                    if await _request_is_stale("before_feedback_ack"):
-                        return
-                    ack = get_feedback_ack(rating, target_lang)
-                    await send_feedback(
-                        session_id=session_id,
-                        user_id=user_id,
-                        process_id=process_id,
-                        rating=rating,
-                        trigger=trigger,
-                        source_lang=source_lang or "gu",
-                        target_lang=target_lang,
-                        message_history_summary={"turn_count": len(history)},
-                        farmer_info=None,
-                        raw_input=None,
-                    )
-                    await set_feedback_rating_received(session_id)
-
-                    feedback_question = get_feedback_question(target_lang)
-                    feedback_q_resp = ModelResponse(parts=[TextPart(content=feedback_question)])
-                    rating_req = ModelRequest(parts=[UserPromptPart(content=query)])
-                    ack_resp = ModelResponse(parts=[TextPart(content=ack)])
-                    await update_message_history(session_id, [*history, feedback_q_resp, rating_req, ack_resp])
-
-                    yield ack
-                    return
-
-                await clear_feedback_initiated(session_id)
-                logger.info(
-                    "Feedback not accepted (is_feedback=%s, rating=%s); routing query to agent",
-                    is_feedback, rating,
-                )
-
             requested_source_lang = (source_lang or "gu").strip().lower()
             requested_target_lang = (target_lang or "gu").strip().lower()
             needs_output_translation = use_translation_pipeline and requested_target_lang in INDIAN_LANGUAGES
@@ -358,15 +316,18 @@ async def stream_voice_message(
                 recent_text = "\n\n".join(format_message_pairs(history, 3))
                 if await _request_is_stale("before_stt_signal_response"):
                     return
+                prior_stt_failures = count_consecutive_stt_signals(history)
+                final_attempt = (prior_stt_failures + 1) >= max(1, settings.stt_signal_retry_ceiling)
                 stt_response = await generate_stt_signal_response(
                     signal=stt_signal,
                     target_lang=requested_target_lang,
                     recent_history_text=recent_text,
+                    final_attempt=final_attempt,
                 )
                 stt_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 stt_resp = ModelResponse(parts=[TextPart(content=stt_response)])
                 await update_message_history(session_id, [*history, stt_req, stt_resp])
-                yield stt_response
+                yield _prepare_voice_output(stt_response, requested_target_lang)
                 return
 
             # ── Hold message short-circuit ────────────────────────────────
@@ -382,7 +343,7 @@ async def stream_voice_message(
                 hold_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 hold_resp = ModelResponse(parts=[TextPart(content=goodbye)])
                 await update_message_history(session_id, [*history, hold_req, hold_resp])
-                yield goodbye
+                yield _prepare_voice_output(goodbye, requested_target_lang)
                 return
 
             # ── Greeting short-circuit ────────────────────────────────────
@@ -397,7 +358,7 @@ async def stream_voice_message(
                 greet_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 greet_resp = ModelResponse(parts=[TextPart(content=greeting_response)])
                 await update_message_history(session_id, [*history, greet_req, greet_resp])
-                yield greeting_response
+                yield _prepare_voice_output(greeting_response, requested_target_lang)
                 return
 
             # ── Fragment short-circuit ────────────────────────────────────
@@ -412,7 +373,7 @@ async def stream_voice_message(
                 frag_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 frag_resp = ModelResponse(parts=[TextPart(content=frag_response)])
                 await update_message_history(session_id, [*history, frag_req, frag_resp])
-                yield frag_response
+                yield _prepare_voice_output(frag_response, requested_target_lang)
                 return
 
             # ── Nudge: arm BEFORE any pre-processing ────────────────────────
@@ -420,30 +381,26 @@ async def stream_voice_message(
             #   (a) the configured timer expires, OR
             #   (b) the LLM invokes a tool (signalled via tool_call_event).
             # Cancelled if first text/translated chunk reaches the client first.
-            #
-            # Skip nudge if we just cleared a feedback state — the user's
-            # message was likely a rating attempt that failed parsing, and
-            # playing a hold message over their response is confusing.
-            _skip_nudge = feedback_state.get("initiated", False) if feedback_state else False
+            nudge_sent = False
             tool_call_event = asyncio.Event()
             set_tool_call_nudge_event(tool_call_event)
 
             async def send_nudge_on_trigger() -> None:
+                nonlocal nudge_sent
                 try:
                     elapsed = max(0.0, time.monotonic() - request_started_at)
-                    remaining = max(0.0, settings.nudge_timeout_seconds - elapsed)
+                    remaining = max(0.0, float(settings.nudge_timeout_seconds) - elapsed)
                     logger.info(
                         "Nudge armed; session_id=%s process_id=%s elapsed=%.3fs remaining=%.3fs timeout=%.3fs",
                         session_id,
                         process_id,
-                        elapsed,
                         remaining,
                         settings.nudge_timeout_seconds,
                     )
 
                     # Wait for EITHER the timer OR a tool-call signal
-                    timer_task = asyncio.ensure_future(asyncio.sleep(remaining))
-                    event_task = asyncio.ensure_future(tool_call_event.wait())
+                    timer_task = asyncio.create_task(asyncio.sleep(remaining))
+                    event_task = asyncio.create_task(tool_call_event.wait())
                     done, pending = await asyncio.wait(
                         {timer_task, event_task},
                         return_when=asyncio.FIRST_COMPLETED,
@@ -454,14 +411,22 @@ async def stream_voice_message(
                     trigger_reason = "tool_call" if event_task in done else "timeout"
                     if await _request_is_stale("before_nudge_send"):
                         return
-                    nudge_msg = get_random_nudge_message(nudge_lang)
+                    if nudge_sent:
+                        return
+                    nudge_sent = True
+                    nudge_msg = (
+                        get_tool_nudge_message(nudge_lang)
+                        if trigger_reason == "tool_call"
+                        else get_timeout_nudge_message(nudge_lang)
+                    )
                     await send_nudge_message_raya(nudge_msg, session_id, process_id)
+                    elapsed = max(0.0, time.monotonic() - request_started_at)
                     logger.info(
                         "Nudge sent (%s); session_id=%s process_id=%s total_elapsed=%.3fs",
                         trigger_reason,
                         session_id,
                         process_id,
-                        time.monotonic() - request_started_at,
+                        elapsed,
                     )
                 except asyncio.CancelledError:
                     pass
@@ -473,20 +438,12 @@ async def stream_voice_message(
                         e,
                     )
 
-            if _skip_nudge:
-                nudge_task = None
-                logger.info(
-                    "Nudge skipped (post-feedback); session_id=%s process_id=%s",
-                    session_id,
-                    process_id,
-                )
-            else:
-                nudge_task = asyncio.create_task(send_nudge_on_trigger())
-                logger.info(
-                    "Nudge initiated; session_id=%s process_id=%s",
-                    session_id,
-                    process_id,
-                )
+            nudge_task = asyncio.create_task(send_nudge_on_trigger())
+            logger.info(
+                "Nudge initiated; session_id=%s process_id=%s",
+                session_id,
+                process_id,
+            )
             # ── End nudge setup ─────────────────────────────────────────────
 
             processing_query = query
@@ -619,7 +576,7 @@ async def stream_voice_message(
                             if await _request_is_stale("during_output_translation"):
                                 return
                             cleaned_chunk = (
-                                clean_output_by_language(translated_chunk, requested_target_lang)
+                                _prepare_voice_output(translated_chunk, requested_target_lang)
                                 if isinstance(translated_chunk, str) and translated_chunk
                                 else translated_chunk
                             )
@@ -630,7 +587,7 @@ async def stream_voice_message(
                             session_id,
                             e,
                         )
-                        yield clean_output_by_language(text_to_translate, "en")
+                        yield _prepare_voice_output(text_to_translate, "en")
 
                 try:
                     async for chunk in stream_iter:
@@ -658,7 +615,7 @@ async def stream_voice_message(
                                     pass
 
                             cleaned_chunk = (
-                                clean_output_by_language(chunk, requested_target_lang)
+                                _prepare_voice_output(chunk, requested_target_lang)
                                 if isinstance(chunk, str) and chunk
                                 else chunk
                             )
@@ -720,7 +677,8 @@ async def stream_voice_message(
                                         process_id,
                                     )
                                     try:
-                                        await nudge_task
+                                        if nudge_task:
+                                            await nudge_task
                                     except asyncio.CancelledError:
                                         pass
                                 if await _request_is_stale("before_final_translated_yield"):
@@ -743,7 +701,8 @@ async def stream_voice_message(
                                         process_id,
                                     )
                                     try:
-                                        await nudge_task
+                                        if nudge_task:
+                                            await nudge_task
                                     except asyncio.CancelledError:
                                         pass
                                 if await _request_is_stale("before_tail_translated_yield"):
@@ -786,21 +745,6 @@ async def stream_voice_message(
             messages = [*history, *new_messages]
             logger.info(f"Updating message history for session {session_id} with {len(messages)} messages")
             await update_message_history(session_id, messages)
-
-            feedback_state = await get_feedback_state(session_id)
-            if not feedback_state.get("initiated"):
-                events = extract_conversation_events_from_messages(new_messages)
-                trigger = None
-                for event in events:
-                    if event in ("conversation_closing", "user_frustration"):
-                        trigger = event
-                        break
-                if trigger and not await _request_is_stale("before_feedback_prompt"):
-                    await set_feedback_initiated(session_id, trigger)
-                    feedback_lang = (requested_target_lang or "gu").strip().lower()
-                    feedback_question = get_feedback_question(feedback_lang)
-                    yield clean_output_by_language(" " + feedback_question, feedback_lang)
-                    logger.info(f"Feedback question yielded via stream (trigger={trigger})")
     finally:
         released = await release_session_request_ownership(owner)
         if owner is not None:

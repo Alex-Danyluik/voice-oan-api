@@ -83,7 +83,8 @@ Query parameters currently expected by the backend:
 Response contract:
 - `text/event-stream`
 - streamed assistant text chunks
-- if the agent signals conversation closing or frustration, a feedback question may be appended at the tail of the stream
+- output is optimized for phone/TTS delivery
+- no feedback question is appended at the tail of the stream
 
 Authentication contract:
 - bearer JWT required outside development
@@ -99,10 +100,17 @@ Caller requirements:
 - preserve `process_id` semantics expected by the provider integration
 
 Backend behavior:
-- Redis stores message history and feedback state per `session_id`
+- Redis stores message history per `session_id`
 - Redis also stores active request ownership per `session_id`
 - if a newer request for the same `session_id` arrives, older in-flight streams stop before writing stale history or sending extra nudges
 - client disconnects are treated as termination for the current in-flight request, not for the whole conversation
+
+Current voice behavior:
+- the assistant should stay brief and conversational
+- output should avoid markdown, bracketed repeats, and punctuation-heavy formatting
+- Gujarati responses should remain respectful and gender-neutral for the caller
+- Sarlaben self-reference should stay feminine in Gujarati
+- generic wait nudges should be short and neutral, for example "I'm getting back to you, please wait"
 
 ## Translation Pipeline
 
@@ -116,9 +124,25 @@ When `ENABLE_TRANSLATION_PIPELINE=true`:
 Relevant tuning env vars:
 - `OPENAI_PRETRANSLATION_MODEL` default: `gpt-5-mini`
 - `OPENAI_PRETRANSLATION_TIMEOUT_SECONDS` default: `4.0`
-- `NUDGE_TIMEOUT_SECONDS` default: `2.0`
+- `NUDGE_TIMEOUT_SECONDS` default: `3.0`
 - `SESSION_OWNER_TTL_SECONDS` default: `120`
 - `SESSION_OWNER_REFRESH_INTERVAL_SECONDS` default: `15`
+
+## Testing
+
+Fast local regression suite:
+```bash
+pytest tests/test_voice_fixes.py tests/test_translation_vocabulary.py tests/test_voice_regressions_apr11_12.py -q
+```
+
+Integration regressions with real model calls and streamed voice behavior:
+```bash
+VOICE_PIPELINE_INTEGRATION=1 pytest tests/test_voice_regressions_apr11_12_integration.py -q
+```
+
+For the real model-backed checks in that file, set the relevant endpoints/keys first:
+- `OPENAI_API_KEY`
+- `TRANSLATEGEMMA_27B_BASE_ENDPOINT` or `TRANSLATEGEMMA_27B_BASE_ENDPOINTS`
 
 ## Maintenance
 

@@ -1,10 +1,8 @@
 import asyncio
 import contextvars
-import json
 import random
 import httpx
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from helpers.utils import get_logger
 from app.config import settings
 
@@ -31,36 +29,37 @@ def fire_tool_call_nudge() -> None:
         event.set()
 
 
-# Load nudge messages once at module load (no disk I/O at request time)
-_NUDGE_MESSAGES_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "nudge_messages.json"
-with open(_NUDGE_MESSAGES_PATH, "r", encoding="utf-8") as _f:
-    _NUDGE_MESSAGES_DATA: dict = json.load(_f)
+_TIMEOUT_NUDGE_MESSAGES: dict[str, list[str]] = {
+    "gu": [
+        "હું જવાબ લઈને પાછી આવું છું, કૃપા કરીને થોડી રાહ જુઓ.",
+        "કૃપા કરીને થોડી રાહ જુઓ, હું ચકાસી રહી છું.",
+    ],
+    "en": [
+        "I'm getting back to you, please wait.",
+        "Please wait a moment while I check.",
+    ],
+}
+
+_TOOL_NUDGE_MESSAGES: dict[str, list[str]] = {
+    "gu": [
+        "હું ચકાસી રહી છું, કૃપા કરીને થોડી રાહ જુઓ.",
+        "કૃપા કરીને થોડી રાહ જુઓ, હું તપાસી રહી છું.",
+    ],
+    "en": [
+        "I'm checking that now, please wait.",
+        "One moment, please wait.",
+    ],
+}
 
 
-def get_random_nudge_message(lang_code: str = "en") -> str:
-    """Get a random nudge (hold) message for the given language from in-memory nudge_messages.
-    Expects a "hold_messages" key with per-lang lists of messages; falls back to "en" if lang missing.
-    """
-    hold = _NUDGE_MESSAGES_DATA.get("hold_messages", {})
-    messages = hold.get(lang_code) or hold.get("en") or []
-    if not messages:
-        return "Please hold."
+def get_timeout_nudge_message(lang_code: str = "en") -> str:
+    messages = _TIMEOUT_NUDGE_MESSAGES.get(lang_code, _TIMEOUT_NUDGE_MESSAGES["en"])
     return random.choice(messages)
 
 
-def get_nudge_message(tool: str, lang_code: str = "en") -> str:
-    """Get a nudge message for a specific tool and action in the specified language."""
-    return _NUDGE_MESSAGES_DATA[tool][lang_code]
-
-
-async def send_feedback_prompt_raya(
-    session_id: str, process_id: Optional[str], lang_code: str = "gu"
-) -> None:
-    """Send the feedback question (1-5 scale) to the user via RAYA nudge API."""
-    from app.services.feedback import get_feedback_question
-
-    message = get_feedback_question(lang_code)
-    await send_nudge_message_raya(message, session_id, process_id)
+def get_tool_nudge_message(lang_code: str = "en") -> str:
+    messages = _TOOL_NUDGE_MESSAGES.get(lang_code, _TOOL_NUDGE_MESSAGES["en"])
+    return random.choice(messages)
 
 
 async def send_nudge_message_raya(message: str, session_id: str, process_id: str = None) -> None:

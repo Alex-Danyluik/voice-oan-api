@@ -11,9 +11,11 @@ speak a bit louder?").
 import os
 import random
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 from openai import AsyncOpenAI
+from pydantic_ai.messages import ModelMessage
+
 from helpers.utils import get_logger
 from app.config import settings
 
@@ -90,11 +92,57 @@ _FALLBACK_UNCLEAR: dict[str, list[str]] = {
     ],
 }
 
+_FINAL_NO_AUDIO: dict[str, list[str]] = {
+    "gu": [
+        "માફ કરશો, હજુ તમારો અવાજ સંભળાતો નથી. કૃપા કરીને પછીથી ફરી પ્રયાસ કરો.",
+        "હાલમાં અવાજ સ્પષ્ટ નથી. કૃપા કરીને થોડા સમય પછી ફરી કોલ કરો.",
+    ],
+    "en": [
+        "Sorry, I still can't hear you. Please try again later.",
+        "The audio is still unclear. Please call again later.",
+    ],
+}
+
+_FINAL_UNCLEAR: dict[str, list[str]] = {
+    "gu": [
+        "માફ કરશો, તમારી વાત હજી સ્પષ્ટ સમજાઈ નથી. કૃપા કરીને પછીથી ફરી પ્રયાસ કરો.",
+        "હું હજી તમારી વાત સમજી શકતી નથી. કૃપા કરીને થોડા સમય પછી ફરી કોલ કરો.",
+    ],
+    "en": [
+        "Sorry, I still couldn't understand that clearly. Please try again later.",
+        "I'm still not able to understand. Please call again later.",
+    ],
+}
+
 
 def _pick_fallback(signal: str, target_lang: str) -> str:
     pool = _FALLBACK_NO_AUDIO if signal == _SIGNAL_NO_AUDIO else _FALLBACK_UNCLEAR
     responses = pool.get(target_lang, pool["en"])
     return random.choice(responses)
+
+
+def _pick_final_fallback(signal: str, target_lang: str) -> str:
+    pool = _FINAL_NO_AUDIO if signal == _SIGNAL_NO_AUDIO else _FINAL_UNCLEAR
+    responses = pool.get(target_lang, pool["en"])
+    return random.choice(responses)
+
+
+def count_consecutive_stt_signals(messages: Sequence[ModelMessage] | None) -> int:
+    """Count consecutive STT signal user messages from the tail of history."""
+    count = 0
+    for msg in reversed(messages or []):
+        user_text = None
+        for part in getattr(msg, "parts", []) or []:
+            if getattr(part, "part_kind", "") == "user-prompt":
+                user_text = getattr(part, "content", None)
+                break
+        if not user_text:
+            continue
+        if detect_stt_signal(user_text) is not None:
+            count += 1
+            continue
+        break
+    return count
 
 
 def _get_openai_client() -> AsyncOpenAI:
@@ -111,6 +159,7 @@ async def generate_stt_signal_response(
     signal: str,
     target_lang: str,
     recent_history_text: str = "",
+    final_attempt: bool = False,
 ) -> str:
     """Ask GPT-5-mini for a short, contextual 'please repeat' message.
 
@@ -124,6 +173,9 @@ async def generate_stt_signal_response(
     Returns:
         A single-sentence response string.
     """
+    if final_attempt:
+        return _pick_final_fallback(signal, target_lang)
+
     lang_label = {"gu": "Gujarati", "en": "English"}.get(target_lang, target_lang)
 
     user_content = (

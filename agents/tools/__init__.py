@@ -8,7 +8,6 @@ from pydantic_ai import Tool
 from agents.tools.terms import search_terms
 from agents.tools.search import search_documents
 from agents.tools.ai_call import create_ai_call
-from agents.tools.feedback import signal_conversation_state
 from agents.tools.common import fire_tool_call_nudge
 
 
@@ -42,10 +41,5 @@ TOOLS = [
         takes_ctx=True,
         docstring_format='auto',
         require_parameter_descriptions=True,
-    ),
-    Tool(
-        _with_nudge_signal(signal_conversation_state),
-        takes_ctx=True,
-        docstring_format='auto',
     ),
 ]

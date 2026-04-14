@@ -1,5 +1,6 @@
 """
-Translation vocabulary test suite — generated from Shridhar feedback (Mar 16-30, 2026).
+Translation vocabulary test suite — generated from Shridhar feedback (Mar 16-30, 2026)
+and extended with the Apr 11-12 production follow-up corpus.
 
 Tests the post-translation normalization pipeline (_post_normalize_gu_translation)
 and documents known vocabulary, gender, and dialect issues as regression tests.
