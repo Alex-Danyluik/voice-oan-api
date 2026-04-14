@@ -276,6 +276,9 @@ class TestHelperCoverage:
         assert "If the intent is partly clear, first confirm your understanding" in prompt_text
         assert "Never open with filler phrases like \"I am checking\"" in prompt_text
         assert "Never output missing-value placeholders" in prompt_text
+        assert "do not invent an explanation" in prompt_text
+        assert "\"feed for the pregnant animal\"" in prompt_text
+        assert "\"samudri\"" in prompt_text and "\"Samruddhi\"" in prompt_text
 
     @pytest.mark.parametrize("text, expected", [
         ("દૂધમાં ચરબી ઓછી છે.", "ફેટ"),

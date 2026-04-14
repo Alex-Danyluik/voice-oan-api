@@ -58,6 +58,9 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use 'માનસિક આઘાત' for mental trauma/stress in animals (not 'તણાવ').",
     "Use 'ફીણ' for foam (not 'ફી').",
     "Use 'દવા' for medicine (Gujarati does not pluralise as 'દવાઓ').",
+    "For feed meant for a pregnant animal, say 'ગાભણ પશુ માટેનું દાણ' or 'ગાભણ દાણ'. Never invent 'ગર્ભચારો' and never say 'ગર્ભ માટેનો ચારો'.",
+    "Never use the phrase 'સામાન્ય જાળવણી ચારો'. Always use natural farmer wording such as 'રોજિંદો ઘાસચારો' or 'નિયમિત સૂકો અને લીલો ચારો'.",
+    "In dairy feed context, if ASR/transcription suggests 'સમુદ્રી' but livestock feed is the likely meaning, prefer 'સમૃદ્ધિ દાણ'. Never drift into marine feed or seaweed advice unless the user explicitly asks about marine products.",
     "Use 'તેને' (not archaic 'તેણીને') for 'to her/it'.",
     "Use 'ભૌતિક' for physical (examination/condition), not 'શારીરિક'.",
     "Never use the hallucinated fodder word 'બરબા'. Use 'બરસીમ' (or 'રજકો' where contextually better).",
@@ -512,6 +515,8 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
         "- Words that look like human names (e.g. સલાદ, સરલા, ગંગા) are almost always ANIMAL NAMES (cow/buffalo names). Transliterate them as-is, do NOT translate literally.\n"
         "- 'ભાઈ' in this context usually refers to a male animal (bull/ox), not a human brother.\n"
         "- Always prefer the veterinary/agricultural meaning of ambiguous words over the everyday meaning.\n"
+        "- If a garbled token does not clearly map to a real medicine, feed, symptom, or service term, do NOT invent a meaning. Keep the translation conservative and set confidence to low.\n"
+        "- In Gujarati dairy feed context, 'Samruddhi' is a common livestock-feed term. If ASR produces 'samudri' or a close phonetic variant in a feed question, prefer the dairy-feed interpretation unless the user explicitly mentions marine products.\n"
     )
 
     # -- Ambiguity hints from ambiguity_terms.json ---------------------

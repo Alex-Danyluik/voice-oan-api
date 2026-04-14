@@ -110,6 +110,9 @@ class TestForbiddenReplacements:
         ("ઘટતું નથી", "ઘટે નહીં"),
         ("ન્યુટ્રીએનર્જીઆ", "ન્યુટ્રીએનર્જી"),
         ("યોગ્ય રીતે ગરમીમાં આવવામાં", "યોગ્ય સમયે ગરમીમાં આવવામાં"),
+        ("ગર્ભચારો", "ગાભણ પશુ માટેનું દાણ"),
+        ("ગર્ભ માટેનો ચારો", "ગાભણ પશુ માટેનો ચારો"),
+        ("સામાન્ય જાળવણી ચારો", "રોજિંદો ઘાસચારો"),
     ])
     def test_forbidden_replaced(self, forbidden, expected):
         """Each forbidden term in output must be replaced with the correct term."""
@@ -178,6 +181,24 @@ class TestForbiddenInContext:
         result = normalize_gu(text)
         assert "યોગ્ય સમયે ગરમીમાં આવવામાં" in result
         assert "યોગ્ય રીતે ગરમીમાં આવવામાં" not in result
+
+    def test_pregnant_animal_feed_does_not_use_nonexistent_garbhacharo(self):
+        text = "ગાયને ગર્ભચારો આપો."
+        result = normalize_gu(text)
+        assert "ગાભણ પશુ માટેનું દાણ" in result
+        assert "ગર્ભચારો" not in result
+
+    def test_feed_is_for_pregnant_animal_not_fetus(self):
+        text = "ગર્ભ માટેનો ચારો આપો."
+        result = normalize_gu(text)
+        assert "ગાભણ પશુ માટેનો ચારો" in result
+        assert "ગર્ભ માટેનો ચારો" not in result
+
+    def test_maintenance_fodder_phrase_is_made_farmer_natural(self):
+        text = "સામાન્ય જાળવણી ચારો આપો."
+        result = normalize_gu(text)
+        assert "રોજિંદો ઘાસચારો" in result
+        assert "સામાન્ય જાળવણી ચારો" not in result
 
     def test_body_term_replacement(self):
         """Use શરીર/પીઠ-style vocabulary, not બૈડા."""
