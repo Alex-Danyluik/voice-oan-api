@@ -103,6 +103,13 @@ class TestForbiddenReplacements:
         ("કીડા", "કૃમિ"),
         # Insemination — ગર્ભાધાન→બીજદાન
         ("ગર્ભાધાન", "બીજદાન"),
+        # Spelling/terminology refinements
+        ("સુકો", "સૂકો"),
+        ("મિશ્રણ ખનીજ તત્વો", "ખનિજ મિશ્રણ"),
+        ("દૂધની પેદાશ", "દૂધના ઉત્પાદન"),
+        ("ઘટતું નથી", "ઘટે નહીં"),
+        ("ન્યુટ્રીએનર્જીઆ", "ન્યુટ્રીએનર્જી"),
+        ("યોગ્ય રીતે ગરમીમાં આવવામાં", "યોગ્ય સમયે ગરમીમાં આવવામાં"),
     ])
     def test_forbidden_replaced(self, forbidden, expected):
         """Each forbidden term in output must be replaced with the correct term."""
@@ -146,6 +153,31 @@ class TestForbiddenInContext:
         text = "જંતુઓ દ્વારા ચેપ લાગે છે."
         result = normalize_gu(text)
         assert "બેક્ટેરિયા" in result
+
+    def test_milk_yield_sentence_prefers_utpadan_and_mishrit_daan(self):
+        text = "તેને દૂધની પેદાશ મુજબ પૂરતું પશુચારો આપો."
+        result = normalize_gu(text)
+        assert "દૂધના ઉત્પાદન મુજબ" in result
+        assert "મિશ્રિત દાણ" in result
+        assert "દૂધની પેદાશ" not in result
+
+    def test_weight_clause_uses_ghate_nahi(self):
+        text = "તેથી તેનું વજન ઘટતું નથી."
+        result = normalize_gu(text)
+        assert "ઘટે નહીં" in result
+        assert "ઘટતું નથી" not in result
+
+    def test_nutrienergy_typo_is_fixed(self):
+        text = "ન્યુટ્રીએનર્જીઆ જેવું સપ્લીમેન્ટ આપો."
+        result = normalize_gu(text)
+        assert "ન્યુટ્રીએનર્જી" in result
+        assert "ન્યુટ્રીએનર્જીઆ" not in result
+
+    def test_heat_phrase_prefers_yogya_samaye(self):
+        text = "તેને યોગ્ય રીતે ગરમીમાં આવવામાં મદદ મળે."
+        result = normalize_gu(text)
+        assert "યોગ્ય સમયે ગરમીમાં આવવામાં" in result
+        assert "યોગ્ય રીતે ગરમીમાં આવવામાં" not in result
 
     def test_body_term_replacement(self):
         """Use શરીર/પીઠ-style vocabulary, not બૈડા."""
@@ -277,6 +309,7 @@ class TestDialectVocabulary:
         ("પશુચારોના", "પશુદાણ", 348, "cattle fodder → cattle feed (concentrate)"),
         ("તૂટેલા અનાજ", "ભરડેલા અનાજ", 550, "broken grain → crushed grain"),
         ("કપાસ", "રુ", 618, "cotton → cottonseed (feed context)"),
+        ("બરબા", "બરસીમ", 700, "hallucinated fodder word → valid fodder term"),
         # Veterinary terms
         ("વંશીય-પશુચિકિત્સા", "પશુ આયુર્વેદ ચિકિત્સા", 353, "ethnoveterinary → ayurvedic vet"),
         # Animal terminology
@@ -393,3 +426,29 @@ class TestPolicyCompleteness:
     def test_replacements_list_built(self):
         """GU_POST_REPLACEMENTS should have base + policy entries."""
         assert len(GU_POST_REPLACEMENTS) >= 30, f"Expected 30+ replacements, got {len(GU_POST_REPLACEMENTS)}"
+
+
+class TestMissingQuantityRepair:
+    """Placeholder quantity slots should be repaired to safe defaults."""
+
+    def test_feed_placeholder_lines_get_defaults(self):
+        text = (
+            "લીલો ચારો: – કિ.ગ્રા. "
+            "સૂકો ચારો: -- કિ.ગ્રા. "
+            "દાણ: – કિલોગ્રામ "
+            "મિનરલ મિશ્રણ: – ગ્રામ "
+            "મીઠું: – ગ્રામ"
+        )
+        result = normalize_gu(text)
+        assert "પંદર થી વીસ કિલોગ્રામ" in result
+        assert "પાંચ થી સાત કિલોગ્રામ" in result
+        assert "બે થી ત્રણ કિલોગ્રામ" in result
+        assert "પચાસ ગ્રામ" in result
+        assert "ત્રીસ ગ્રામ" in result
+        assert "કિ.ગ્રા." not in result
+        assert "બરબા" not in result
+
+    def test_berba_normalizes_to_barseem(self):
+        result = normalize_gu("લીલો ચારો તરીકે બરબા આપો.")
+        assert "બરસીમ" in result
+        assert "બરબા" not in result

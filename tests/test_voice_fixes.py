@@ -224,6 +224,12 @@ class TestVoiceOutputNormalization:
         assert "ચાર" in result
         assert "કિલોગ્રામ" in result
 
+    def test_placeholder_dashes_before_units_are_removed(self):
+        result = clean_output_by_language("લીલો ચારો: -- કિ.ગ્રા.", "gu")
+        assert "--" not in result
+        assert "કિ.ગ્રા." not in result
+        assert "કિલોગ્રામ" in result
+
 
 # ---------------------------------------------------------------------------
 # STT signal detection tests

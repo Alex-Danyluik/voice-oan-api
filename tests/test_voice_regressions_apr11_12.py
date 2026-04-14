@@ -270,12 +270,20 @@ class TestHelperCoverage:
         assert voice_agent.model_settings["temperature"] == 0.0
         assert voice_agent.model_settings["parallel_tool_calls"] is False
 
+    def test_translation_pipeline_prompt_has_unclear_input_confirmation_rules(self):
+        prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        assert "If the intent is partly clear, first confirm your understanding" in prompt_text
+        assert "Never open with filler phrases like \"I am checking\"" in prompt_text
+        assert "Never output missing-value placeholders" in prompt_text
+
     @pytest.mark.parametrize("text, expected", [
         ("દૂધમાં ચરબી ઓછી છે.", "ફેટ"),
         ("ગાય ગર્ભવતી છે.", "ગાભણ"),
         ("સારા બળદ નો ઉપયોગ કરો.", "બુલ"),
         ("મને બૈડું ઠંડું લાગે છે.", "શરીર ઠંડું લાગે છે"),
         ("પશુના બૈડા પર સોજો છે.", "પીઠ"),
+        ("લીલા ચારમાં બરબા આપો.", "બરસીમ"),
     ])
     def test_current_gu_term_policy_still_holds(self, text, expected):
         result = normalize_gu(text)

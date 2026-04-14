@@ -60,6 +60,8 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use 'દવા' for medicine (Gujarati does not pluralise as 'દવાઓ').",
     "Use 'તેને' (not archaic 'તેણીને') for 'to her/it'.",
     "Use 'ભૌતિક' for physical (examination/condition), not 'શારીરિક'.",
+    "Never use the hallucinated fodder word 'બરબા'. Use 'બરસીમ' (or 'રજકો' where contextually better).",
+    "Never output placeholder quantities like '-', '--', or '–' for feed/dose lines; use safe conservative defaults when exact values are missing.",
 ]
 
 
@@ -123,6 +125,30 @@ GU_BODY_AGREEMENT_FIXES = [
     (r"પીઠ\s+ઠંડું\s+લાગે\s+છે", "પીઠ ઠંડી લાગે છે"),
 ]
 
+_GU_PLACEHOLDER_RE = r"(?:[-–—]{1,3}|[‐‑‒―])"
+_GU_QTY_PLACEHOLDER_PATTERNS: list[tuple[str, str]] = [
+    (
+        rf"(લીલો\s*ચારો\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
+        r"\1પંદર થી વીસ કિલોગ્રામ",
+    ),
+    (
+        rf"(સૂકો\s*ચારો\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
+        r"\1પાંચ થી સાત કિલોગ્રામ",
+    ),
+    (
+        rf"(દાણ\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
+        r"\1બે થી ત્રણ કિલોગ્રામ",
+    ),
+    (
+        rf"(મિનરલ\s*મિશ્રણ\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:ગ્રા\.?|ગ્રામ|g|gm)?",
+        r"\1પચાસ ગ્રામ",
+    ),
+    (
+        rf"(મીઠું\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:ગ્રા\.?|ગ્રામ|g|gm)?",
+        r"\1ત્રીસ ગ્રામ",
+    ),
+]
+
 
 def _fix_dandas(text: str) -> str:
     """Replace Devanagari dandas (।) with periods in TranslateGemma output."""
@@ -170,6 +196,16 @@ def _normalize_gu_body_terms(text: str) -> str:
     return out
 
 
+def _repair_gu_quantity_placeholders(text: str) -> str:
+    """Replace placeholder-only Gujarati feed quantity slots with safe defaults."""
+    out = text
+    for pat, repl in _GU_QTY_PLACEHOLDER_PATTERNS:
+        out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+    # Remove leftover explicit placeholder dashes after a colon to avoid TTS noise.
+    out = re.sub(rf"([:：]\s*){_GU_PLACEHOLDER_RE}(?=\s|$)", r"\1", out)
+    return out
+
+
 def _post_normalize_gu_translation(
     text: str,
     target_lang: str,
@@ -182,6 +218,7 @@ def _post_normalize_gu_translation(
     out = _normalize_gu_body_terms(out)
     for pat, repl in GU_POST_REPLACEMENTS:
         out = re.sub(pat, repl, out)
+    out = _repair_gu_quantity_placeholders(out)
     # collapse extra spaces introduced by removals
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
