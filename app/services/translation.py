@@ -449,6 +449,20 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
     ]
 
 
+def _build_structured_pretranslation_prompt(source_name: str, source_code: str, text: str) -> str:
+    """Build the structured translation+confidence prompt for non-OpenAI fallback models."""
+    messages = _build_openai_pretranslation_messages(source_name, source_code, text)
+    system_content = messages[0]["content"]
+    user_content = messages[1]["content"]
+    return (
+        "<bos><start_of_turn>user\n"
+        f"{system_content}\n\nUser message:\n{user_content}\n\n"
+        'Respond only with valid JSON: {"translation": "...", "confidence": "high" or "low"}.'
+        "<end_of_turn>\n"
+        "<start_of_turn>model\n"
+    )
+
+
 async def _create_openai_pretranslation_response(
     client: AsyncOpenAI,
     *,
@@ -508,6 +522,11 @@ def _extract_translation_from_response(response) -> tuple[str, str]:
     Returns (translation, confidence) where confidence is "high", "low", or "unknown".
     """
     raw = (response.choices[0].message.content or "").strip()
+    return _extract_translation_from_raw(raw)
+
+
+def _extract_translation_from_raw(raw: str) -> tuple[str, str]:
+    """Extract translation text and confidence from raw model output."""
     if not raw:
         return "", "unknown"
     try:
@@ -518,6 +537,56 @@ def _extract_translation_from_response(response) -> tuple[str, str]:
     except (json.JSONDecodeError, AttributeError):
         # Fallback: use raw content if JSON parsing fails
         return raw, "unknown"
+
+
+async def translate_to_english_with_structured_fallback(
+    text: str,
+    source_lang: str,
+    *,
+    max_tokens: int = 1024,
+) -> tuple[str, str]:
+    """Fallback pretranslation with the same structured contract as the OpenAI path."""
+    if not text or not text.strip():
+        return text, "unknown"
+
+    if source_lang.lower() in {"english", "en"}:
+        return text, "high"
+
+    source_name = LANG_NAMES.get(source_lang.lower(), source_lang.capitalize())
+    source_code = LANG_CODES.get(source_lang.lower(), source_lang.lower())
+    prompt = _build_structured_pretranslation_prompt(source_name, source_code, text)
+    model_size, endpoint, model_id = _resolve_model(None, "english")
+    if not endpoint or not model_id:
+        raise ValueError(f"Invalid translation model size: {model_size}")
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{endpoint}/completions",
+            json={
+                "model": model_id,
+                "prompt": prompt,
+                "temperature": 0.0,
+                "max_tokens": max_tokens,
+            },
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                logger.error("Structured fallback pretranslation API error %s: %s", response.status, error_text)
+                raise Exception(f"Structured fallback pretranslation failed with status {response.status}")
+
+            result = await response.json()
+            raw_text = result["choices"][0]["text"].strip()
+            translated_text, confidence = _extract_translation_from_raw(raw_text)
+            translated_text = normalize_voice_output(translated_text, "english")
+            if not translated_text:
+                logger.warning(
+                    "Structured fallback pretranslation returned empty; treating as low confidence - source_lang=%s query=%r",
+                    source_lang,
+                    (text or "")[:100],
+                )
+                return text, "low"
+            return translated_text, confidence
 
 
 async def translate_to_english_with_gpt5_mini(

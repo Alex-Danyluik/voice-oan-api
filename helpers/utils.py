@@ -14,6 +14,7 @@ from datetime import datetime
 import simplejson as json
 from jinja2 import Environment, FileSystemLoader, Template
 import pytz
+from helpers.gujarati_numbers import normalize_numbers_for_tts
 
 load_dotenv()
 
@@ -236,6 +237,9 @@ def normalize_voice_output(
 
     lang = (lang_code or "").strip().lower()
     out = ud.normalize("NFC", text)
+
+    if lang == "gu":
+        out = normalize_numbers_for_tts(out)
 
     # Strip markdown and structural noise that should never be spoken.
     out = out.replace("**", "").replace("__", "").replace("`", "").replace("~", "")

@@ -20,10 +20,11 @@ voice_agent = Agent(
     deps=FarmerContext,
     retries=3,
     tools=TOOLS,
-    end_strategy='exhaustive',
+    end_strategy='early',
     model_settings=ModelSettings(
-        max_tokens=8192,
-        parallel_tool_calls=True,
+        max_tokens=3600,
+        temperature=0.0,
+        parallel_tool_calls=False,
    )
 )
 

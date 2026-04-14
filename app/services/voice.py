@@ -42,6 +42,7 @@ from app.services.translation import (
     translate_text,
     translate_text_stream_fast,
     translate_to_english_with_gpt5_mini,
+    translate_to_english_with_structured_fallback,
 )
 # NOTE: Removing telemetry for now.
 # from app.tasks.telemetry import send_telemetry
@@ -100,7 +101,7 @@ _GREETING_TOKENS = {
     # English
     "hello", "hi", "hey", "hlo",
     # Gujarati
-    "હલો", "હેલો", "નમસ્તે", "નમસ્કાર", "હા",
+    "હલો", "હેલો", "નમસ્તે", "નમસ્કાર",
     # Hindi
     "नमस्ते", "हेलो", "हलो",
     # Transliteration
@@ -168,10 +169,26 @@ _HOLD_MSG_PATTERNS_EN = [
     "please stay on the line",
     "please remain on the line",
 ]
-_HOLD_GOODBYE = {
+TELEPHONY_TERMINATE_CALL_TOKEN = {
     "gu": "Goodbye.",
     "en": "Goodbye.",
 }
+
+
+def _has_meaningful_history(history: list) -> bool:
+    """Return True when the session already contains non-trivial conversation."""
+    for msg in reversed(history or []):
+        for part in getattr(msg, "parts", []) or []:
+            content = getattr(part, "content", None)
+            if not isinstance(content, str):
+                continue
+            text = content.strip()
+            if not text:
+                continue
+            if detect_stt_signal(text) is not None:
+                continue
+            return True
+    return False
 
 
 def _is_hold_message(query: str) -> bool:
@@ -339,7 +356,10 @@ async def stream_voice_message(
                     "Hold message detected; responding with goodbye to cut call - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query[:100],
                 )
-                goodbye = _HOLD_GOODBYE.get(requested_target_lang, _HOLD_GOODBYE["en"])
+                goodbye = TELEPHONY_TERMINATE_CALL_TOKEN.get(
+                    requested_target_lang,
+                    TELEPHONY_TERMINATE_CALL_TOKEN["en"],
+                )
                 hold_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 hold_resp = ModelResponse(parts=[TextPart(content=goodbye)])
                 await update_message_history(session_id, [*history, hold_req, hold_resp])
@@ -349,7 +369,7 @@ async def stream_voice_message(
             # ── Greeting short-circuit ────────────────────────────────────
             # Bare greetings ("hello", "હલો", "હા") should not trigger the
             # full agent pipeline or a nudge.  Respond immediately.
-            if _is_bare_greeting(query):
+            if _is_bare_greeting(query) and not _has_meaningful_history(history):
                 logger.info(
                     "Bare greeting detected; short-circuiting - session_id=%s process_id=%s query=%r",
                     session_id, process_id, query,
@@ -474,10 +494,9 @@ async def stream_voice_message(
                     )
                     try:
                         logger.info("Falling back to TranslateGemma pretranslation for session_id=%s", session_id)
-                        processing_query = await translate_text(
+                        processing_query, pretranslation_confidence = await translate_to_english_with_structured_fallback(
                             text=query,
                             source_lang=requested_source_lang,
-                            target_lang="english",
                         )
                         processing_lang = "en"
                     except Exception as fallback_error:
@@ -506,7 +525,7 @@ async def stream_voice_message(
                 low_conf_req = ModelRequest(parts=[UserPromptPart(content=query)])
                 low_conf_rsp = ModelResponse(parts=[TextPart(content=low_conf_resp)])
                 await update_message_history(session_id, [*history, low_conf_req, low_conf_rsp])
-                yield low_conf_resp
+                yield _prepare_voice_output(low_conf_resp, requested_target_lang)
                 return
 
             if use_translation_pipeline and needs_output_translation:

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.services.voice import _is_bare_greeting, _is_fragment_query, _is_hold_message
 from app.services.stt_signals import detect_stt_signal
 from agents.tools.terms import get_ambiguity_hints_for_query
+from helpers.utils import clean_output_by_language
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +36,6 @@ class TestGreetingDetection:
         "હલો",
         "હેલો",
         "નમસ્તે",
-        "હા",
         "नमस्ते",
         "हेलो",
         "namaste",
@@ -207,6 +207,22 @@ class TestHoldMessageDetection:
         # Should not match any ambiguity term (unless it fuzzy-matches something)
         # At minimum, should not crash
         assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Voice output normalization tests
+# ---------------------------------------------------------------------------
+
+class TestVoiceOutputNormalization:
+    """Verify Gujarati number text survives the final language filter."""
+
+    def test_gujarati_digits_are_normalized_before_filtering(self):
+        result = clean_output_by_language("3-4 કિ.ગ્રા.", "gu")
+        assert "3" not in result
+        assert "4" not in result
+        assert "ત્રણ" in result
+        assert "ચાર" in result
+        assert "કિલોગ્રામ" in result
 
 
 # ---------------------------------------------------------------------------
