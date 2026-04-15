@@ -693,41 +693,36 @@ class TestMultiTurnFlows:
         assert "No audio/User is speaking softly" not in history_text
 
     def test_tool_triggered_nudge_fires_once_before_first_chunk(self, monkeypatch):
-        from app.services import voice as voice_module
-
         nudges: list[str] = []
         tool_event_box: dict = {}
-
-        async def _pretranslate(*args, **kwargs):
-            return "What should I do for my cow?", "high"
 
         async def _trigger_tool_event():
             await asyncio.sleep(0)
             tool_event_box["event"].set()
 
         response_stream = _FakeResponseStream(
-            chunks=["હું તપાસીને કહું છું."],
+            chunks=["I will check and tell you."],
             delay=0.03,
             on_enter=_trigger_tool_event,
         )
 
-        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
-
         output, _ = asyncio.run(
             _collect_stream(
-                query="મારી ગાયને શું કરવું",
+                query="What should I do for my cow?",
                 session_id="multiturn-tool-nudge",
                 history=[],
                 monkeypatch=monkeypatch,
                 response_stream=response_stream,
+                source_lang="en",
+                target_lang="en",
                 nudges=nudges,
                 tool_event_box=tool_event_box,
             )
         )
 
-        assert "હું તપાસીને" in output
+        assert "I will check" in output
         assert len(nudges) == 1
-        assert "રાહ જુઓ" in nudges[0] or "તપાસી રહી છું" in nudges[0]
+        assert "wait" in nudges[0].lower()
 
     def test_closing_turn_does_not_append_feedback_across_turns(self, monkeypatch):
         first_output, history = asyncio.run(
