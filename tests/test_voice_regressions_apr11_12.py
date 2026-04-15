@@ -20,7 +20,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agents.voice import voice_agent, voice_agent_signed_in, STATIC_VOICE_SYSTEM_PROMPT
 from app.services.stt_signals import detect_stt_signal
-from app.services.translation import _extract_translation_from_raw, _post_normalize_gu_translation
+from app.services.translation import (
+    GU_PREFERRED_TRANSLATION_RULES,
+    _build_openai_pretranslation_messages,
+    _extract_translation_from_raw,
+    _post_normalize_gu_translation,
+)
 from app.services.voice import (
     TELEPHONY_TERMINATE_CALL_TOKEN,
     _build_compact_farmer_summary,
@@ -313,6 +318,42 @@ class TestHelperCoverage:
         assert "Provided in runtime context message." in STATIC_VOICE_SYSTEM_PROMPT
         assert "{{today_date}}" not in STATIC_VOICE_SYSTEM_PROMPT
         assert "{{farmer_context}}" not in STATIC_VOICE_SYSTEM_PROMPT
+
+    def test_pretranslation_prompt_preserves_uncertainty(self):
+        messages = _build_openai_pretranslation_messages(
+            "Gujarati",
+            "gu",
+            "કા પણ બેની કઈ દોરણ ખાવડાવું જોઈએ",
+        )
+        prompt = messages[0]["content"]
+        assert "faithful pretranslation" in prompt
+        assert "Preserve uncertainty" in prompt
+        assert "Do not infer animal species" in prompt
+        assert "Set confidence to \"high\" only when the core request is clear without guessing" in prompt
+        assert "unclear animal" in prompt
+        assert "Never convert a doubtful token into a specific medicine, feed, disease, animal species, or service term" in prompt
+
+    def test_pretranslation_prompt_does_not_turn_address_words_into_caller_gender(self):
+        messages = _build_openai_pretranslation_messages("Gujarati", "gu", "બેન મારી ભેંસને તાવ છે")
+        prompt = messages[0]["content"]
+        assert "Kinship words" in prompt
+        assert "Do not turn them into the caller's gender" in prompt
+        assert "address marker" in prompt
+        assert "mark confidence low if the word could also be an address marker" in prompt
+
+    def test_core_prompt_requires_professional_detached_gender_neutral_tone(self):
+        assert "professional, cordial, detached" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Do not mirror kinship words from the translation" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Never address the caller as sister" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Never infer or assign the caller's gender" in STATIC_VOICE_SYSTEM_PROMPT
+
+    def test_gujarati_output_rules_keep_addressing_neutral_and_detached(self):
+        rules = "\n".join(GU_PREFERRED_TRANSLATION_RULES)
+        assert "professional, cordial, and detached" in rules
+        assert "Do not translate English address markers" in rules
+        assert "sister, brother, bhai, ben, madam, or sir" in rules
+        assert "respectful gender-neutral 'આપ'" in rules
+        assert "do not call the caller બહેન" in rules
 
     def test_runtime_context_request_contains_dynamic_turn_state(self):
         deps = FarmerContext(
@@ -652,8 +693,13 @@ class TestMultiTurnFlows:
         assert "No audio/User is speaking softly" not in history_text
 
     def test_tool_triggered_nudge_fires_once_before_first_chunk(self, monkeypatch):
+        from app.services import voice as voice_module
+
         nudges: list[str] = []
         tool_event_box: dict = {}
+
+        async def _pretranslate(*args, **kwargs):
+            return "What should I do for my cow?", "high"
 
         async def _trigger_tool_event():
             await asyncio.sleep(0)
@@ -664,6 +710,8 @@ class TestMultiTurnFlows:
             delay=0.03,
             on_enter=_trigger_tool_event,
         )
+
+        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
 
         output, _ = asyncio.run(
             _collect_stream(
