@@ -119,6 +119,25 @@ GU_TERM_POLICY = _load_gu_term_policy()
 GU_POLICY_REPLACEMENTS = _build_gu_policy_replacements(GU_TERM_POLICY)
 GU_POST_REPLACEMENTS = GU_POST_REPLACEMENTS_BASE + GU_POLICY_REPLACEMENTS
 
+# ── Gender-neutral caller-address guard ─────────────────────────────────────
+# Replace gendered address terms directed at the *caller* with neutral forms.
+# Patterns are boundary-aware: they must NOT match inside "સરલાબેન" or livestock
+# compound terms (e.g. "ભૂખ ભાઈ" is a common animal-behaviour phrase, but
+# "ભાઈ," at the start of a greeting is a caller address).
+# Each tuple: (compiled pattern, replacement).
+GU_GENDER_NEUTRAL_POST: list[tuple[re.Pattern, str]] = [
+    # "ભાઈ" or "ભૈ" as caller address (preceded by start-of-string, comma, space, or period)
+    (re.compile(r"(?<![^\s,।.!?])ભ(?:ાઈ|ૈ)(?=\s*[,।!?]|\s|$)"), ""),
+    # "બહેન" / "બેન" as caller address
+    (re.compile(r"(?<![^\s,।.!?])બ(?:હેન|ેન)(?=\s*[,।!?]|\s|$)"), ""),
+    # "સાહેબ" as caller address
+    (re.compile(r"(?<![^\s,।.!?])સ(?:ા)?હ(?:ે)?બ(?=\s*[,।!?]|\s|$)"), ""),
+    # "મેડમ" / "મૅડમ" / "મૅડ" as caller address
+    (re.compile(r"(?<![^\s,।.!?])મ(?:ે|ૅ|ૅ)ડ(?:મ|)(?=\s*[,।!?]|\s|$)"), ""),
+    # "સર" as standalone caller address (not part of "સરલાબેન")
+    (re.compile(r"(?<![^\s,।.!?])સર(?!લ)(?=\s*[,।!?]|\s|$)"), ""),
+]
+
 GU_WORD_BOUNDARY_START = r"(?<![\u0A80-\u0AFF])"
 GU_WORD_BOUNDARY_END = r"(?![\u0A80-\u0AFF])"
 GU_BODY_SLANG_VARIANTS = r"(?:બૈડા|બૈડું|બૈડુ|બરડા|બરડું|બરડુ)"
@@ -225,6 +244,27 @@ def _post_normalize_gu_translation(
     for pat, repl in GU_POST_REPLACEMENTS:
         out = re.sub(pat, repl, out)
     out = _repair_gu_quantity_placeholders(out)
+
+    # -- Gender-neutral caller-address guard --------------------------------
+    # Strip gendered address terms (ભાઈ, બહેન, સાહેબ, મેડમ, સર) directed at
+    # the caller before the text reaches TTS.
+    for pat, repl in GU_GENDER_NEUTRAL_POST:
+        out = pat.sub(repl, out)
+
+    # -- Scaffold collapse: "Label: value\nLabel: value" → spoken flow ------
+    # Collapse inline label patterns (short non-space word + colon at line start)
+    # into a comma-space connector so they don't create list-like TTS artifacts.
+    out = re.sub(r"(?m)^\s*[^\s:।.!?\n]{1,20}\s*:\s*", ", ", out)
+    # Strip stray leading comma left by the above at the start of text
+    out = re.sub(r"^\s*,\s*", "", out)
+
+    # -- Unicode noise cleanup -----------------------------------------------
+    out = out.replace("\u00A0", " ")   # NBSP → regular space
+    out = out.replace("\u200D", "")    # ZWJ → removed
+    out = out.replace("\u200C", "")    # ZWNJ → removed
+    # Punctuation spacing: no space before ,।.!?
+    out = re.sub(r"\s+([,।.!?])", r"\1", out)
+
     # collapse extra spaces introduced by removals
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)

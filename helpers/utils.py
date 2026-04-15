@@ -261,7 +261,9 @@ def normalize_voice_output(
     # Strip markdown and structural noise that should never be spoken.
     out = out.replace("**", "").replace("__", "").replace("`", "").replace("~", "")
     out = re.sub(r"(?m)^\s*#+\s*", "", out)
-    out = re.sub(r"(?m)^\s*(?:[-*•]+|\d+[.)])\s*", "", out)
+    # Extended list-scrub: Latin bullets/dashes, em/en-dashes, Gujarati-style
+    # bullets (•·), and Gujarati-numeral list markers (e.g. "૧. ", "૧) ").
+    out = re.sub(r"(?m)^\s*(?:[-–—*•·]+|\d+[.)]|[૦-૯]+[.)]\s)\s*", "", out)
 
     out = _replace_voice_abbreviations(out, lang)
     out = _remove_quantity_placeholders(out)
