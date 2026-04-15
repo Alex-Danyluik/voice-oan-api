@@ -88,8 +88,8 @@ def _set_identity_monkeypatches(monkeypatch, *, response_stream: _FakeResponseSt
     async def _noop_async(*args, **kwargs):
         return None
 
-    async def _get_farmer_full_context_string(mobile):
-        return ""
+    async def _get_or_fetch_farmer_data(mobile):
+        return None
 
     async def _update_message_history(session_id, messages):
         history_store[session_id] = messages
@@ -97,13 +97,22 @@ def _set_identity_monkeypatches(monkeypatch, *, response_stream: _FakeResponseSt
     async def _send_nudge_message_raya(message, session_id, process_id=None):
         return None
 
+    async def _render_text_for_caller(text_en, target_lang):
+        if target_lang in {"gu", "gujarati"}:
+            if text_en == "Hello, I am Sarlaben. Please tell me what issue you are facing with your animal.":
+                return "નમસ્તે, હું સરલાબેન છું. તમારા પશુ વિશે કોઈ સમસ્યા હોય તો મને જણાવો."
+            if text_en == "I could not understand your question. Please ask your question again.":
+                return "મને તમારો પ્રશ્ન સમજાયો નથી. કૃપા કરીને તમારો પ્રશ્ન ફરીથી પૂછો."
+        return text_en
+
     monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
-    monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
+    monkeypatch.setattr(voice_module, "get_or_fetch_farmer_data", _get_or_fetch_farmer_data)
     monkeypatch.setattr(voice_module, "clean_message_history_for_openai", lambda history: history)
     monkeypatch.setattr(voice_module, "trim_history", lambda history, **kwargs: history)
     monkeypatch.setattr(voice_module, "format_message_pairs", lambda history, limit=None: [])
     monkeypatch.setattr(voice_module, "update_message_history", _update_message_history)
     monkeypatch.setattr(voice_module, "send_nudge_message_raya", _send_nudge_message_raya)
+    monkeypatch.setattr(voice_module, "_render_text_for_caller", _render_text_for_caller)
     monkeypatch.setattr(voice_module, "get_timeout_nudge_message", lambda lang_code="gu": "હું જવાબ લઈને પાછી આવું છું, કૃપા કરીને થોડી રાહ જુઓ.")
     monkeypatch.setattr(voice_module, "get_tool_nudge_message", lambda lang_code="gu": "હું તપાસી રહી છું, કૃપા કરીને થોડી રાહ જુઓ.")
     monkeypatch.setattr(voice_module.settings, "nudge_timeout_seconds", 0.02, raising=False)
@@ -164,14 +173,14 @@ async def _collect_live_stream(
 
     history_store: dict[str, list] = {}
 
-    async def _get_farmer_full_context_string(mobile):
-        return ""
+    async def _get_or_fetch_farmer_data(mobile):
+        return None
 
     async def _update_message_history(session_id, messages):
         history_store[session_id] = messages
 
     monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
-    monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
+    monkeypatch.setattr(voice_module, "get_or_fetch_farmer_data", _get_or_fetch_farmer_data)
     monkeypatch.setattr(voice_module, "update_message_history", _update_message_history)
 
     chunks: list[str] = []

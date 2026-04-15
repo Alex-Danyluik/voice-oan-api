@@ -21,6 +21,8 @@ class FarmerContext(BaseModel):
     session_id: Optional[str] = Field(default=None, description="The session ID for the user.")
     process_id: Optional[str] = Field(default=None, description="The process ID for tracking and hold messages.")
     farmer_info: str = Field(default="", description="Pre-built markdown farmer context string.")
+    signed_in: bool = Field(default=False, description="Whether the session is signed in/authenticated for farmer-specific tools.")
+    mobile: Optional[str] = Field(default=None, description="Normalized mobile number when available.")
 
     def _query_string(self):
         """Get the query string for the agrinet agent."""
@@ -29,6 +31,25 @@ class FarmerContext(BaseModel):
     def get_farmer_context_string(self) -> Optional[str]:
         """Return the pre-built farmer context markdown string."""
         return self.farmer_info if self.farmer_info else None
+
+    def get_runtime_context_message(self) -> str:
+        """Compact runtime context that stays outside the static system prompt."""
+        lines = [
+            "Runtime context for this turn:",
+            f"- Signed-in session: {'yes' if self.signed_in else 'no'}",
+            f"- Normalized mobile available: {'yes' if self.mobile else 'no'}",
+        ]
+        if self.mobile:
+            lines.append(f"- Normalized mobile: {self.mobile}")
+        lines.append("- Core loop language: English")
+        if self.signed_in:
+            lines.append("- Farmer-data tools may be available for this turn.")
+        else:
+            lines.append("- Farmer-data tools should not be assumed available for this turn.")
+        if self.farmer_info:
+            lines.append("- Farmer context summary:")
+            lines.append(self.farmer_info)
+        return "\n".join(lines)
 
     def get_user_message(self):
         """Get the user message for the agrinet agent."""

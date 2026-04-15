@@ -18,16 +18,26 @@ from pydantic_ai.messages import ModelRequest, TextPart, UserPromptPart
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agents.voice import voice_agent
+from agents.voice import voice_agent, voice_agent_signed_in, STATIC_VOICE_SYSTEM_PROMPT
 from app.services.stt_signals import detect_stt_signal
-from app.services.translation import _extract_translation_from_raw, _post_normalize_gu_translation
+from app.services.translation import (
+    GU_PREFERRED_TRANSLATION_RULES,
+    _build_openai_pretranslation_messages,
+    _extract_translation_from_raw,
+    _post_normalize_gu_translation,
+)
 from app.services.voice import (
     TELEPHONY_TERMINATE_CALL_TOKEN,
+    _build_compact_farmer_summary,
+    _build_runtime_context_request,
     _has_meaningful_history,
     _is_bare_greeting,
     _is_fragment_query,
+    _is_signed_in_session,
     _is_hold_message,
 )
+from agents.deps import FarmerContext
+from agents.models.farmer import FarmerDataEnvelope, FarmerRecord
 
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "apr11_12_regressions.json"
@@ -87,14 +97,23 @@ def _set_voice_monkeypatches(
     history_store: dict,
     nudges: list[str] | None = None,
     tool_event_box: dict | None = None,
+    run_stream_override=None,
+    signed_in_run_stream_override=None,
+    normalize_phone_override=None,
+    farmer_data_override=None,
 ):
     from agents import voice as voice_agent_module
     from app.services import voice as voice_module
 
-    monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", lambda **kwargs: response_stream)
+    if run_stream_override is not None:
+        monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", run_stream_override)
+    else:
+        monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", lambda **kwargs: response_stream)
+    if signed_in_run_stream_override is not None:
+        monkeypatch.setattr(voice_agent_module.voice_agent_signed_in, "run_stream", signed_in_run_stream_override)
 
-    async def _get_farmer_full_context_string(mobile):
-        return ""
+    async def _get_or_fetch_farmer_data(_mobile):
+        return None
 
     async def _update_message_history(session_id, messages):
         history_store[session_id] = messages
@@ -117,8 +136,15 @@ def _set_voice_monkeypatches(
             tool_event_box["event"] = event
         return SimpleNamespace()
 
-    monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
-    monkeypatch.setattr(voice_module, "get_farmer_full_context_string", _get_farmer_full_context_string)
+    if normalize_phone_override is not None:
+        monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", normalize_phone_override)
+    else:
+        monkeypatch.setattr(voice_module, "normalize_phone_to_mobile", lambda user_id: None)
+    monkeypatch.setattr(
+        voice_module,
+        "get_or_fetch_farmer_data",
+        farmer_data_override if farmer_data_override is not None else _get_or_fetch_farmer_data,
+    )
     monkeypatch.setattr(voice_module, "clean_message_history_for_openai", lambda history: history)
     monkeypatch.setattr(voice_module, "trim_history", lambda history, **kwargs: history)
     monkeypatch.setattr(voice_module, "format_message_pairs", lambda history, limit=None: [])
@@ -139,8 +165,13 @@ async def _collect_stream(
     response_stream: _FakeResponseStream,
     source_lang: str = "gu",
     target_lang: str = "gu",
+    user_id: str = "anonymous",
     nudges: list[str] | None = None,
     tool_event_box: dict | None = None,
+    run_stream_override=None,
+    signed_in_run_stream_override=None,
+    normalize_phone_override=None,
+    farmer_data_override=None,
 ):
     history_store: dict[str, list] = {}
     voice_module = _set_voice_monkeypatches(
@@ -149,6 +180,10 @@ async def _collect_stream(
         history_store=history_store,
         nudges=nudges,
         tool_event_box=tool_event_box,
+        run_stream_override=run_stream_override,
+        signed_in_run_stream_override=signed_in_run_stream_override,
+        normalize_phone_override=normalize_phone_override,
+        farmer_data_override=farmer_data_override,
     )
     chunks: list[str] = []
     async for chunk in voice_module.stream_voice_message(
@@ -156,7 +191,7 @@ async def _collect_stream(
         session_id=session_id,
         source_lang=source_lang,
         target_lang=target_lang,
-        user_id="anonymous",
+        user_id=user_id,
         history=history,
         provider=None,
         process_id="proc-1",
@@ -269,6 +304,96 @@ class TestHelperCoverage:
         assert voice_agent.model_settings["max_tokens"] == 3600
         assert voice_agent.model_settings["temperature"] == 0.0
         assert voice_agent.model_settings["parallel_tool_calls"] is False
+        assert voice_agent_signed_in.end_strategy == "early"
+        assert voice_agent_signed_in.model_settings["max_tokens"] == 3600
+
+    def test_signed_in_agent_has_farmer_tools(self):
+        base_tool_names = set(voice_agent._function_tools.keys())
+        signed_in_tool_names = set(voice_agent_signed_in._function_tools.keys())
+        assert {"search_terms", "search_documents", "create_ai_call"}.issubset(base_tool_names)
+        assert {"get_farmer_profile", "get_herd_summary", "list_animal_tags"}.issubset(signed_in_tool_names)
+        assert "get_farmer_profile" not in base_tool_names
+
+    def test_voice_system_prompt_is_static(self):
+        assert "Provided in runtime context message." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "{{today_date}}" not in STATIC_VOICE_SYSTEM_PROMPT
+        assert "{{farmer_context}}" not in STATIC_VOICE_SYSTEM_PROMPT
+
+    def test_pretranslation_prompt_preserves_uncertainty(self):
+        messages = _build_openai_pretranslation_messages(
+            "Gujarati",
+            "gu",
+            "કા પણ બેની કઈ દોરણ ખાવડાવું જોઈએ",
+        )
+        prompt = messages[0]["content"]
+        assert "faithful pretranslation" in prompt
+        assert "Preserve uncertainty" in prompt
+        assert "Do not infer animal species" in prompt
+        assert "Set confidence to \"high\" only when the core request is clear without guessing" in prompt
+        assert "unclear animal" in prompt
+        assert "Never convert a doubtful token into a specific medicine, feed, disease, animal species, or service term" in prompt
+
+    def test_pretranslation_prompt_does_not_turn_address_words_into_caller_gender(self):
+        messages = _build_openai_pretranslation_messages("Gujarati", "gu", "બેન મારી ભેંસને તાવ છે")
+        prompt = messages[0]["content"]
+        assert "Kinship words" in prompt
+        assert "Do not turn them into the caller's gender" in prompt
+        assert "address marker" in prompt
+        assert "mark confidence low if the word could also be an address marker" in prompt
+
+    def test_core_prompt_requires_professional_detached_gender_neutral_tone(self):
+        assert "professional, cordial, detached" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Do not mirror kinship words from the translation" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Never address the caller as sister" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Never infer or assign the caller's gender" in STATIC_VOICE_SYSTEM_PROMPT
+
+    def test_gujarati_output_rules_keep_addressing_neutral_and_detached(self):
+        rules = "\n".join(GU_PREFERRED_TRANSLATION_RULES)
+        assert "professional, cordial, and detached" in rules
+        assert "Do not translate English address markers" in rules
+        assert "sister, brother, bhai, ben, madam, or sir" in rules
+        assert "respectful gender-neutral 'આપ'" in rules
+        assert "do not call the caller બહેન" in rules
+
+    def test_runtime_context_request_contains_dynamic_turn_state(self):
+        deps = FarmerContext(
+            query="What is your name?",
+            farmer_info="# Farmer Context\n\n- **Matched farmer records:** 1",
+            signed_in=True,
+            mobile="9723293369",
+        )
+        request = _build_runtime_context_request(deps)
+        content = request.parts[0].content
+        assert "Runtime context for this turn:" in content
+        assert "Signed-in session: yes" in content
+        assert "Normalized mobile: 9723293369" in content
+        assert "Farmer context summary:" in content
+
+    def test_signed_in_session_helper(self):
+        assert _is_signed_in_session({"sub": "user-1"}, "anonymous") is True
+        assert _is_signed_in_session({}, "9876543210") is True
+        assert _is_signed_in_session({}, "anonymous") is False
+
+    def test_compact_farmer_summary_is_small_and_structured(self):
+        envelope = FarmerDataEnvelope(
+            farmers=[
+                FarmerRecord(
+                    farmerName="Rameshbhai",
+                    societyName="Anand Dairy Society",
+                    farmerCode="F123",
+                    totalAnimals=6,
+                    tagNumbers="1001,1002,1003",
+                )
+            ],
+            source="cache",
+        )
+        summary = _build_compact_farmer_summary(envelope)
+        assert "Farmer records matched: 1" in summary
+        assert "Farmer data source: cache" in summary
+        assert "Farmer name: Rameshbhai" in summary
+        assert "Farmer code available: yes" in summary
+        assert "Known animal tags: 1001, 1002, 1003" in summary
+        assert "##" not in summary
 
     def test_translation_pipeline_prompt_has_unclear_input_confirmation_rules(self):
         prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"
@@ -393,11 +518,18 @@ class TestMultiTurnFlows:
         assert "પશુચિકિત્સક" in second_output
 
     def test_affirmative_with_meaningful_history_does_not_restart_as_greeting(self, monkeypatch):
+        from app.services import voice as voice_module
+
         history = _make_agent_messages("ગાય માટે કે ભેંસ માટે?", "ગાય માટે કે ભેંસ માટે?")
         agent_called = {"value": False}
 
         async def _mark_called():
             agent_called["value"] = True
+
+        async def _pretranslate(*args, **kwargs):
+            return "yes", "high"
+
+        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
 
         output, _ = asyncio.run(
             _collect_stream(
@@ -416,6 +548,122 @@ class TestMultiTurnFlows:
         assert agent_called["value"] is True
         assert "નમસ્તે" not in output
         assert "સમજાયું" in output
+
+    def test_runtime_context_is_not_persisted_in_history(self, monkeypatch):
+        output, saved_history = asyncio.run(
+            _collect_stream(
+                query="તમારું નામ શું છે?",
+                session_id="runtime-context-not-persisted",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(
+                    chunks=["હું સરલાબેન છું."],
+                    new_messages=_make_agent_messages("What is your name?", "I am Sarlaben."),
+                ),
+            )
+        )
+
+        assert output
+        persisted_text = " ".join(
+            getattr(part, "content", "")
+            for msg in saved_history
+            for part in getattr(msg, "parts", [])
+            if isinstance(getattr(part, "content", None), str)
+        )
+        assert "Runtime context for this turn:" not in persisted_text
+
+    def test_stream_builds_runtime_context_from_cached_farmer_summary(self, monkeypatch):
+        from app.services import voice as voice_module
+
+        captured = {}
+
+        async def _fake_farmer_data(_mobile):
+            return FarmerDataEnvelope(
+                farmers=[
+                    FarmerRecord(
+                        farmerName="Rameshbhai",
+                        societyName="Anand Dairy Society",
+                        farmerCode="F123",
+                        totalAnimals=6,
+                        tagNumbers="1001,1002",
+                    )
+                ],
+                source="cache",
+            )
+
+        def _run_stream(**kwargs):
+            history = kwargs["message_history"]
+            captured["runtime_context"] = history[0].parts[0].content
+            return _FakeResponseStream(
+                chunks=["હું સરલાબેન છું."],
+                new_messages=_make_agent_messages("What is your name?", "I am Sarlaben."),
+            )
+
+        output, _ = asyncio.run(
+            _collect_stream(
+                query="તમારું નામ શું છે?",
+                session_id="runtime-context-farmer-summary",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(),
+                source_lang="gu",
+                target_lang="gu",
+                user_id="9723293369",
+                signed_in_run_stream_override=_run_stream,
+                normalize_phone_override=lambda user_id: user_id,
+                farmer_data_override=_fake_farmer_data,
+            )
+        )
+
+        assert output
+        runtime_context = captured["runtime_context"]
+        assert "Farmer data source: cache" in runtime_context
+        assert "Farmer name: Rameshbhai" in runtime_context
+        assert "Known animal tags: 1001, 1002" in runtime_context
+
+    def test_signed_in_session_uses_signed_in_agent_and_higher_request_limit(self, monkeypatch):
+        from app.services import voice as voice_module
+
+        captured = {}
+
+        async def _fake_farmer_data(_mobile):
+            return FarmerDataEnvelope(
+                farmers=[FarmerRecord(farmerName="Rameshbhai", tagNumbers="1001")],
+                source="cache",
+            )
+
+        def _signed_in_run_stream(**kwargs):
+            captured["request_limit"] = kwargs["usage_limits"].request_limit
+            return _FakeResponseStream(
+                chunks=["હું સરલાબેન છું."],
+                new_messages=_make_agent_messages("What is your name?", "I am Sarlaben."),
+            )
+
+        def _unexpected_base_run_stream(**kwargs):
+            raise AssertionError("anonymous agent should not be used for signed-in session")
+
+        monkeypatch.setattr(voice_module, "get_or_fetch_farmer_data", _fake_farmer_data)
+        from agents import voice as voice_agent_module
+        monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", _unexpected_base_run_stream)
+        monkeypatch.setattr(voice_agent_module.voice_agent_signed_in, "run_stream", _signed_in_run_stream)
+
+        output, _ = asyncio.run(
+            _collect_stream(
+                query="તમારું નામ શું છે?",
+                session_id="signed-in-agent-selection",
+                history=[],
+                monkeypatch=monkeypatch,
+                response_stream=_FakeResponseStream(),
+                source_lang="gu",
+                target_lang="gu",
+                user_id="9723293369",
+                normalize_phone_override=lambda user_id: user_id,
+                farmer_data_override=_fake_farmer_data,
+            )
+        )
+
+        assert output
+        assert captured["request_limit"] == 6
 
     def test_repeated_stt_failures_hit_retry_ceiling_on_third_attempt(self, monkeypatch):
         from app.services import voice as voice_module
@@ -466,26 +714,28 @@ class TestMultiTurnFlows:
             tool_event_box["event"].set()
 
         response_stream = _FakeResponseStream(
-            chunks=["હું તપાસીને કહું છું."],
+            chunks=["I will check and tell you."],
             delay=0.03,
             on_enter=_trigger_tool_event,
         )
 
         output, _ = asyncio.run(
             _collect_stream(
-                query="મારી ગાયને શું કરવું",
+                query="What should I do for my cow?",
                 session_id="multiturn-tool-nudge",
                 history=[],
                 monkeypatch=monkeypatch,
                 response_stream=response_stream,
+                source_lang="en",
+                target_lang="en",
                 nudges=nudges,
                 tool_event_box=tool_event_box,
             )
         )
 
-        assert "હું તપાસીને" in output
+        assert "I will check" in output
         assert len(nudges) == 1
-        assert "રાહ જુઓ" in nudges[0] or "તપાસી રહી છું" in nudges[0]
+        assert "wait" in nudges[0].lower()
 
     def test_closing_turn_does_not_append_feedback_across_turns(self, monkeypatch):
         first_output, history = asyncio.run(

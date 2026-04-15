@@ -40,6 +40,9 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use farmer-preferred Gujarati livestock terms.",
     "Address the caller respectfully with gender-neutral 'આપ' forms; never infer the caller's gender.",
     "Sarlaben must always use feminine self-reference in Gujarati.",
+    "Keep the tone professional, cordial, and detached; do not become overly familiar or chatty.",
+    "Do not translate English address markers such as sister, brother, bhai, ben, madam, or sir into caller labels like બહેન, ભાઈ, મેડમ, or સાહેબ. Use respectful gender-neutral 'આપ' wording instead.",
+    "If the English source mentions 'sister' because the caller addressed Sarlaben, do not call the caller બહેન. Omit the address marker or render it as a neutral reference to સરલાબેન only when necessary.",
     "Never use slang body terms like 'બૈડા/બૈડું/બરડા/બરડું'. Prefer 'પીઠ' for back/flank context and 'શરીર' for general body context.",
     "Prefer 'બાવલું' over 'પાહો' for udder context.",
     "Prefer 'ધાર' over 'ટીપાં' for milk streams.",
@@ -512,11 +515,17 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
         "You are translating messages from Indian dairy farmers calling the Amul AI helpline (voiced as 'Sarlaben' / સરલાબેન). "
         "The farmers speak Gujarati and ask about animal health, milk production, fodder, breeding, and dairy cooperative services.\n\n"
         "IMPORTANT translation rules:\n"
+        "- Your job is faithful pretranslation for safe routing, not correction, completion, or advice.\n"
+        "- Preserve uncertainty from the original speech. Do not repair missing words, fill missing slots, or choose a clean interpretation when the audio transcript is ambiguous.\n"
         "- Words that look like human names (e.g. સલાદ, સરલા, ગંગા) are almost always ANIMAL NAMES (cow/buffalo names). Transliterate them as-is, do NOT translate literally.\n"
         "- 'ભાઈ' in this context usually refers to a male animal (bull/ox), not a human brother.\n"
         "- Always prefer the veterinary/agricultural meaning of ambiguous words over the everyday meaning.\n"
         "- If a garbled token does not clearly map to a real medicine, feed, symptom, or service term, do NOT invent a meaning. Keep the translation conservative and set confidence to low.\n"
         "- In Gujarati dairy feed context, 'Samruddhi' is a common livestock-feed term. If ASR produces 'samudri' or a close phonetic variant in a feed question, prefer the dairy-feed interpretation unless the user explicitly mentions marine products.\n"
+        "- Kinship words like બેન, બહેન, ભાઈ are often address markers for Sarlaben or filler in phone speech. Do not turn them into the caller's gender. Use 'Sarlaben' only if the caller is clearly addressing the assistant; otherwise omit the address marker.\n"
+        "- 'ભાઈ' in livestock context may refer to a male animal (bull/ox), but mark confidence low if the word could also be an address marker.\n"
+        "- Prefer veterinary/agricultural meanings only when the term is clear in the original transcript. If choosing the agricultural meaning requires guessing, preserve the uncertain token and set confidence low.\n"
+        "- Do not infer animal species. If cow/buffalo/sheep/goat is unclear, write 'unclear animal' or keep the uncertain token, and set confidence low.\n"
     )
 
     # -- Ambiguity hints from ambiguity_terms.json ---------------------
@@ -531,13 +540,13 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
 
     system_content = (
         f"{domain_preamble}\n"
-        "Translate the user's message to clean spoken English. "
+        "Translate the user's message to faithful spoken English for an internal agent. "
         "Respond with JSON: {\"translation\": \"...\", \"confidence\": \"high\" or \"low\"}.\n\n"
-        "Do not preserve markdown, bullets, bracketed duplicates, or other formatting clutter.\n"
-        "Set confidence to \"low\" when the input is garbled noise, random syllables, or "
-        "you are largely guessing the meaning rather than translating recognizable words. "
-        "Set confidence to \"high\" when you can identify real words and the translation "
-        "reflects what was actually said, even if grammar is poor or the sentence is incomplete."
+        "Do not preserve markdown, bullets, bracketed duplicates, or other formatting clutter, but do preserve the meaning uncertainty.\n"
+        "Set confidence to \"high\" only when the core request is clear without guessing: animal or subject, problem or topic, and desired action are identifiable from the transcript.\n"
+        "Set confidence to \"low\" when the input is garbled noise, random syllables, fragmentary, contradictory, or when any key noun, animal species, medicine, feed, product, disease, symptom, or requested action is uncertain.\n"
+        "If confidence is low, still provide the most faithful translation possible, using markers such as 'unclear animal', 'unclear feed name', 'unclear symptom', or '[unclear token]' instead of inventing missing meaning.\n"
+        "Never convert a doubtful token into a specific medicine, feed, disease, animal species, or service term just because it would make a plausible livestock question."
     )
 
     return [
