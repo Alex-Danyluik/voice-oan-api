@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.voice import _is_bare_greeting, _is_fragment_query, _is_hold_message
 from app.services.stt_signals import detect_stt_signal
+from app.services.translation import _post_normalize_gu_translation
 from agents.tools.terms import get_ambiguity_hints_for_query
 from helpers.utils import clean_output_by_language
 
@@ -235,6 +236,15 @@ class TestVoiceOutputNormalization:
         assert "--" not in result
         assert "કિ.ગ્રા." not in result
         assert "લીલો ચારો:" in result
+
+    def test_streaming_gu_chunk_preserves_leading_space(self):
+        result = _post_normalize_gu_translation(" તમારી", "gu", strip_outer=False)
+        assert result.startswith(" ")
+        assert result == " તમારી"
+
+    def test_non_streaming_gu_chunk_can_strip_outer_space(self):
+        result = _post_normalize_gu_translation(" તમારી", "gu", strip_outer=True)
+        assert result == "તમારી"
 
 
 # ---------------------------------------------------------------------------
