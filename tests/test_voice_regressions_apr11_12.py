@@ -347,6 +347,10 @@ class TestHelperCoverage:
         assert "Do not mirror kinship words from the translation" in STATIC_VOICE_SYSTEM_PROMPT
         assert "Never address the caller as sister" in STATIC_VOICE_SYSTEM_PROMPT
         assert "Never infer or assign the caller's gender" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "This is a live phone call, not a chat or article." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Default to one short sentence." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Do not use colons, headings, labels, hyphens, or en dashes" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Do not organize the answer as \"one\", \"two\", \"three\"" in STATIC_VOICE_SYSTEM_PROMPT
 
     def test_gujarati_output_rules_keep_addressing_neutral_and_detached(self):
         rules = "\n".join(GU_PREFERRED_TRANSLATION_RULES)
@@ -406,6 +410,21 @@ class TestHelperCoverage:
         assert "\"feed for the pregnant animal\"" in prompt_text
         assert "\"samudri\"" in prompt_text
         assert "ask for clarification rather than assuming a brand name" in prompt_text
+        assert "This is a phone call. The caller cannot see formatting." in prompt_text
+        assert "Do not use colons, headings, labels, hyphens, or en dashes" in prompt_text
+        assert "For comparison questions, give only the main difference first" in prompt_text
+        assert "Do not append a follow-up question unless it is necessary" in prompt_text
+
+    def test_translation_pipeline_prompt_contains_short_voice_examples(self):
+        prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        assert "## Voice Examples" in prompt_text
+        assert "User: `What is the difference between A2 milk and normal milk?`" in prompt_text
+        assert "Assistant: `A2 milk differs mainly in the type of beta casein protein." in prompt_text
+        assert "User: `samudri dan for buffalo`" in prompt_text
+        assert "Assistant: `Please repeat that feed name once. I did not understand it clearly.`" in prompt_text
+        assert "User: `No, that is all`" in prompt_text
+        assert "Assistant: `All right. You can call again if you need help.`" in prompt_text
 
     @pytest.mark.parametrize("text, expected", [
         ("દૂધમાં ચરબી ઓછી છે.", "ફેટ"),
