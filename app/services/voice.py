@@ -819,12 +819,6 @@ async def stream_voice_message(
                 sentence_buffer = ""
                 translation_batch: list[str] = []
                 batch_word_count = 0
-                # Verbosity trim: track how many sentences have been forwarded to the
-                # translation batch.  Sentences beyond the limit are dropped unless they
-                # end in "?" (clarification questions must always pass through).
-                _trim_limit = 3 if settings.voice_post_trim else 9999
-                _trim_sentences_sent = 0
-
                 async def _yield_translated_text(text_to_translate: str) -> AsyncGenerator[str, None]:
                     if not text_to_translate:
                         return
@@ -891,13 +885,8 @@ async def stream_voice_message(
                         complete_sentences, remaining = extract_complete_sentences(sentence_buffer)
                         if complete_sentences:
                             for sentence in complete_sentences:
-                                # Verbosity gate: drop sentences past the limit unless
-                                # they are clarification questions (end with "?").
-                                if _trim_sentences_sent >= _trim_limit and not sentence.strip().endswith("?"):
-                                    continue
                                 translation_batch.append(sentence)
                                 batch_word_count += len(sentence.split())
-                                _trim_sentences_sent += 1
 
                             batch_text = "".join(translation_batch)
                             if should_translate_batch(batch_text, batch_word_count):

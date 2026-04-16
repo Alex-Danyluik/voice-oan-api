@@ -234,7 +234,7 @@ class TestVoiceOutputNormalization:
         result = clean_output_by_language("લીલો ચારો: -- કિ.ગ્રા.", "gu")
         assert "--" not in result
         assert "કિ.ગ્રા." not in result
-        assert "કિલોગ્રામ" in result
+        assert "લીલો ચારો:" in result
 
 
 # ---------------------------------------------------------------------------

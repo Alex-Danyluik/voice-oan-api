@@ -450,9 +450,9 @@ class TestPolicyCompleteness:
 
 
 class TestMissingQuantityRepair:
-    """Placeholder quantity slots should be repaired to safe defaults."""
+    """Placeholder quantity slots should be stripped without inventing defaults."""
 
-    def test_feed_placeholder_lines_get_defaults(self):
+    def test_feed_placeholder_lines_do_not_invent_defaults(self):
         text = (
             "લીલો ચારો: – કિ.ગ્રા. "
             "સૂકો ચારો: -- કિ.ગ્રા. "
@@ -461,11 +461,13 @@ class TestMissingQuantityRepair:
             "મીઠું: – ગ્રામ"
         )
         result = normalize_gu(text)
-        assert "પંદર થી વીસ કિલોગ્રામ" in result
-        assert "પાંચ થી સાત કિલોગ્રામ" in result
-        assert "બે થી ત્રણ કિલોગ્રામ" in result
-        assert "પચાસ ગ્રામ" in result
-        assert "ત્રીસ ગ્રામ" in result
+        assert "પંદર થી વીસ કિલોગ્રામ" not in result
+        assert "પાંચ થી સાત કિલોગ્રામ" not in result
+        assert "બે થી ત્રણ કિલોગ્રામ" not in result
+        assert "પચાસ ગ્રામ" not in result
+        assert "ત્રીસ ગ્રામ" not in result
+        assert "--" not in result
+        assert "–" not in result
         assert "કિ.ગ્રા." not in result
         assert "બરબા" not in result
 

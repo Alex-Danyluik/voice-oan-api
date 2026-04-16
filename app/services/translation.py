@@ -63,11 +63,11 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use 'દવા' for medicine (Gujarati does not pluralise as 'દવાઓ').",
     "For feed meant for a pregnant animal, say 'ગાભણ પશુ માટેનું દાણ' or 'ગાભણ દાણ'. Never invent 'ગર્ભચારો' and never say 'ગર્ભ માટેનો ચારો'.",
     "Never use the phrase 'સામાન્ય જાળવણી ચારો'. Always use natural farmer wording such as 'રોજિંદો ઘાસચારો' or 'નિયમિત સૂકો અને લીલો ચારો'.",
-    "In dairy feed context, if ASR/transcription suggests 'સમુદ્રી' but livestock feed is the likely meaning, prefer 'સમૃદ્ધિ દાણ'. Never drift into marine feed or seaweed advice unless the user explicitly asks about marine products.",
+    "In dairy feed context, if ASR/transcription suggests 'સમુદ્રી' but livestock feed is the likely meaning, prefer asking or keeping the term conservative over drifting into marine feed or seaweed advice.",
     "Use 'તેને' (not archaic 'તેણીને') for 'to her/it'.",
     "Use 'ભૌતિક' for physical (examination/condition), not 'શારીરિક'.",
     "Never use the hallucinated fodder word 'બરબા'. Use 'બરસીમ' (or 'રજકો' where contextually better).",
-    "Never output placeholder quantities like '-', '--', or '–' for feed/dose lines; use safe conservative defaults when exact values are missing.",
+    "Never output placeholder quantities like '-', '--', or '–' for feed or dose lines. If exact values are missing, keep the wording non-numeric rather than inventing a quantity.",
 ]
 
 
@@ -151,28 +151,6 @@ GU_BODY_AGREEMENT_FIXES = [
 ]
 
 _GU_PLACEHOLDER_RE = r"(?:[-–—]{1,3}|[‐‑‒―])"
-_GU_QTY_PLACEHOLDER_PATTERNS: list[tuple[str, str]] = [
-    (
-        rf"(લીલો\s*ચારો\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
-        r"\1પંદર થી વીસ કિલોગ્રામ",
-    ),
-    (
-        rf"(સૂકો\s*ચારો\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
-        r"\1પાંચ થી સાત કિલોગ્રામ",
-    ),
-    (
-        rf"(દાણ\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:કિ\.?\s*ગ્રા\.?|કિલોગ્રામ|kg|kgs|ગ્રા\.?|ગ્રામ)?",
-        r"\1બે થી ત્રણ કિલોગ્રામ",
-    ),
-    (
-        rf"(મિનરલ\s*મિશ્રણ\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:ગ્રા\.?|ગ્રામ|g|gm)?",
-        r"\1પચાસ ગ્રામ",
-    ),
-    (
-        rf"(મીઠું\s*[:：]?\s*){_GU_PLACEHOLDER_RE}\s*(?:ગ્રા\.?|ગ્રામ|g|gm)?",
-        r"\1ત્રીસ ગ્રામ",
-    ),
-]
 
 
 def _fix_dandas(text: str) -> str:
@@ -221,16 +199,6 @@ def _normalize_gu_body_terms(text: str) -> str:
     return out
 
 
-def _repair_gu_quantity_placeholders(text: str) -> str:
-    """Replace placeholder-only Gujarati feed quantity slots with safe defaults."""
-    out = text
-    for pat, repl in _GU_QTY_PLACEHOLDER_PATTERNS:
-        out = re.sub(pat, repl, out, flags=re.IGNORECASE)
-    # Remove leftover explicit placeholder dashes after a colon to avoid TTS noise.
-    out = re.sub(rf"([:：]\s*){_GU_PLACEHOLDER_RE}(?=\s|$)", r"\1", out)
-    return out
-
-
 def _post_normalize_gu_translation(
     text: str,
     target_lang: str,
@@ -243,7 +211,8 @@ def _post_normalize_gu_translation(
     out = _normalize_gu_body_terms(out)
     for pat, repl in GU_POST_REPLACEMENTS:
         out = re.sub(pat, repl, out)
-    out = _repair_gu_quantity_placeholders(out)
+    # Remove placeholder dashes without inventing a quantity.
+    out = re.sub(rf"([:：]\s*){_GU_PLACEHOLDER_RE}(?=\s|$)", r"\1", out)
 
     # -- Gender-neutral caller-address guard --------------------------------
     # Strip gendered address terms (ભાઈ, બહેન, સાહેબ, મેડમ, સર) directed at
@@ -558,10 +527,7 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
         "- Your job is faithful pretranslation for safe routing, not correction, completion, or advice.\n"
         "- Preserve uncertainty from the original speech. Do not repair missing words, fill missing slots, or choose a clean interpretation when the audio transcript is ambiguous.\n"
         "- Words that look like human names (e.g. સલાદ, સરલા, ગંગા) are almost always ANIMAL NAMES (cow/buffalo names). Transliterate them as-is, do NOT translate literally.\n"
-        "- 'ભાઈ' in this context usually refers to a male animal (bull/ox), not a human brother.\n"
-        "- Always prefer the veterinary/agricultural meaning of ambiguous words over the everyday meaning.\n"
         "- If a garbled token does not clearly map to a real medicine, feed, symptom, or service term, do NOT invent a meaning. Keep the translation conservative and set confidence to low.\n"
-        "- In Gujarati dairy feed context, 'Samruddhi' is a common livestock-feed term. If ASR produces 'samudri' or a close phonetic variant in a feed question, prefer the dairy-feed interpretation unless the user explicitly mentions marine products.\n"
         "- Kinship words like બેન, બહેન, ભાઈ are often address markers for Sarlaben or filler in phone speech. Do not turn them into the caller's gender. Use 'Sarlaben' only if the caller is clearly addressing the assistant; otherwise omit the address marker.\n"
         "- 'ભાઈ' in livestock context may refer to a male animal (bull/ox), but mark confidence low if the word could also be an address marker.\n"
         "- Prefer veterinary/agricultural meanings only when the term is clear in the original transcript. If choosing the agricultural meaning requires guessing, preserve the uncertain token and set confidence low.\n"
