@@ -35,6 +35,7 @@ from app.services.voice import (
     _is_fragment_query,
     _is_signed_in_session,
     _is_hold_message,
+    _voice_answer_mode_for_query,
 )
 from agents.deps import FarmerContext
 from agents.models.farmer import FarmerDataEnvelope, FarmerRecord
@@ -373,6 +374,22 @@ class TestHelperCoverage:
         assert "Signed-in session: yes" in content
         assert "Normalized mobile: 9723293369" in content
         assert "Farmer context summary:" in content
+
+    def test_runtime_context_adds_compact_comparison_mode(self):
+        deps = FarmerContext(query="What is the difference between A2 milk and normal milk?")
+        request = _build_runtime_context_request(deps)
+        content = request.parts[0].content
+        assert "Voice answer mode: compact comparison." in content
+        assert "Give one short contrast sentence" in content
+        assert "Do not enumerate." in content
+
+    @pytest.mark.parametrize("query, expected", [
+        ("What is the difference between A2 milk and normal milk?", "compact_comparison"),
+        ("Compare buffalo milk and cow milk", "compact_comparison"),
+        ("My cow has fever", None),
+    ])
+    def test_voice_answer_mode_for_query(self, query, expected):
+        assert _voice_answer_mode_for_query(query) == expected
 
     def test_signed_in_session_helper(self):
         assert _is_signed_in_session({"sub": "user-1"}, "anonymous") is True
