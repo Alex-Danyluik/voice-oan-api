@@ -156,6 +156,12 @@ class TestAmbiguityTerms:
         assert "shed" in result.lower() or "enclosure" in result.lower()
         assert "પાડો" not in result or "NOT પાડો" in result
 
+    def test_samudri_feed_prefers_samruddhi_context(self):
+        """Feed-context સમુદ્રી should be treated as likely સમૃદ્ધિ દાણ, not marine feed."""
+        result = get_ambiguity_hints_for_query("ગાભણ ભેંસને સમુદ્રી દાણ આપવું?")
+        assert "samruddhi" in result.lower() or "સમૃદ્ધિ" in result
+        assert "seaweed" in result.lower() or "marine feed" in result.lower()
+
 # ---------------------------------------------------------------------------
 # Hold message detection tests
 # ---------------------------------------------------------------------------
@@ -223,6 +229,12 @@ class TestVoiceOutputNormalization:
         assert "ત્રણ" in result
         assert "ચાર" in result
         assert "કિલોગ્રામ" in result
+
+    def test_placeholder_dashes_before_units_are_removed(self):
+        result = clean_output_by_language("લીલો ચારો: -- કિ.ગ્રા.", "gu")
+        assert "--" not in result
+        assert "કિ.ગ્રા." not in result
+        assert "લીલો ચારો:" in result
 
 
 # ---------------------------------------------------------------------------

@@ -79,6 +79,13 @@ class TestForbiddenReplacements:
         ("ઘીમાં પકાવવું", "ઘી બનાવવું"),
         # Physical/scientific — [58] શારીરિક→ભૌતિક
         ("શારીરિક", "ભૌતિક"),
+        # Body terms — avoid colloquial/dialectal "બૈડા/બૈડું/બરડા/બરડું"
+        ("બૈડા", "શરીર"),
+        ("બૈડું", "શરીર"),
+        ("બૈડુ", "શરીર"),
+        ("બરડા", "શરીર"),
+        ("બરડું", "શરીર"),
+        ("બરડુ", "શરીર"),
         # Medical — [162] ચૂભો→ચીરો, [168] તણાવ→માનસિક આઘાત
         ("ચૂભો", "ચીરો"),
         ("તણાવ", "માનસિક આઘાત"),
@@ -96,6 +103,16 @@ class TestForbiddenReplacements:
         ("કીડા", "કૃમિ"),
         # Insemination — ગર્ભાધાન→બીજદાન
         ("ગર્ભાધાન", "બીજદાન"),
+        # Spelling/terminology refinements
+        ("સુકો", "સૂકો"),
+        ("મિશ્રણ ખનીજ તત્વો", "ખનિજ મિશ્રણ"),
+        ("દૂધની પેદાશ", "દૂધના ઉત્પાદન"),
+        ("ઘટતું નથી", "ઘટે નહીં"),
+        ("ન્યુટ્રીએનર્જીઆ", "ન્યુટ્રીએનર્જી"),
+        ("યોગ્ય રીતે ગરમીમાં આવવામાં", "યોગ્ય સમયે ગરમીમાં આવવામાં"),
+        ("ગર્ભચારો", "ગાભણ પશુ માટેનું દાણ"),
+        ("ગર્ભ માટેનો ચારો", "ગાભણ પશુ માટેનો ચારો"),
+        ("સામાન્ય જાળવણી ચારો", "રોજિંદો ઘાસચારો"),
     ])
     def test_forbidden_replaced(self, forbidden, expected):
         """Each forbidden term in output must be replaced with the correct term."""
@@ -139,6 +156,77 @@ class TestForbiddenInContext:
         text = "જંતુઓ દ્વારા ચેપ લાગે છે."
         result = normalize_gu(text)
         assert "બેક્ટેરિયા" in result
+
+    def test_milk_yield_sentence_prefers_utpadan_and_mishrit_daan(self):
+        text = "તેને દૂધની પેદાશ મુજબ પૂરતું પશુચારો આપો."
+        result = normalize_gu(text)
+        assert "દૂધના ઉત્પાદન મુજબ" in result
+        assert "મિશ્રિત દાણ" in result
+        assert "દૂધની પેદાશ" not in result
+
+    def test_weight_clause_uses_ghate_nahi(self):
+        text = "તેથી તેનું વજન ઘટતું નથી."
+        result = normalize_gu(text)
+        assert "ઘટે નહીં" in result
+        assert "ઘટતું નથી" not in result
+
+    def test_nutrienergy_typo_is_fixed(self):
+        text = "ન્યુટ્રીએનર્જીઆ જેવું સપ્લીમેન્ટ આપો."
+        result = normalize_gu(text)
+        assert "ન્યુટ્રીએનર્જી" in result
+        assert "ન્યુટ્રીએનર્જીઆ" not in result
+
+    def test_heat_phrase_prefers_yogya_samaye(self):
+        text = "તેને યોગ્ય રીતે ગરમીમાં આવવામાં મદદ મળે."
+        result = normalize_gu(text)
+        assert "યોગ્ય સમયે ગરમીમાં આવવામાં" in result
+        assert "યોગ્ય રીતે ગરમીમાં આવવામાં" not in result
+
+    def test_pregnant_animal_feed_does_not_use_nonexistent_garbhacharo(self):
+        text = "ગાયને ગર્ભચારો આપો."
+        result = normalize_gu(text)
+        assert "ગાભણ પશુ માટેનું દાણ" in result
+        assert "ગર્ભચારો" not in result
+
+    def test_feed_is_for_pregnant_animal_not_fetus(self):
+        text = "ગર્ભ માટેનો ચારો આપો."
+        result = normalize_gu(text)
+        assert "ગાભણ પશુ માટેનો ચારો" in result
+        assert "ગર્ભ માટેનો ચારો" not in result
+
+    def test_maintenance_fodder_phrase_is_made_farmer_natural(self):
+        text = "સામાન્ય જાળવણી ચારો આપો."
+        result = normalize_gu(text)
+        assert "રોજિંદો ઘાસચારો" in result
+        assert "સામાન્ય જાળવણી ચારો" not in result
+
+    def test_body_term_replacement(self):
+        """Use શરીર/પીઠ-style vocabulary, not બૈડા."""
+        text = "પશુના બૈડા પર સોજો છે."
+        result = normalize_gu(text)
+        assert "પીઠ" in result
+        assert "બૈડા" not in result
+
+    def test_body_term_singular_defaults_to_sharir(self):
+        """Generic body sense should normalize to શરીર with correct agreement."""
+        text = "મને બૈડું ઠંડું લાગે છે."
+        result = normalize_gu(text)
+        assert "શરીર ઠંડું લાગે છે" in result
+        assert "બૈડું" not in result
+
+    def test_body_term_back_context_uses_pith(self):
+        """Back-location context should normalize to પીઠ."""
+        text = "ગાયના બરડામાં દુખાવો છે."
+        result = normalize_gu(text)
+        assert "પીઠમાં દુખાવો" in result
+        assert "બરડામાં" not in result
+
+    def test_body_term_agreement_fixes(self):
+        """Common agreement mismatches after normalization should be corrected."""
+        text = "મને શરીર ઠંડા લાગે છે અને પીઠ ઠંડું લાગે છે."
+        result = normalize_gu(text)
+        assert "શરીર ઠંડું લાગે છે" in result
+        assert "પીઠ ઠંડી લાગે છે" in result
 
     def test_butter_word(self):
         """[130] મખાણ→માખણ."""
@@ -242,6 +330,7 @@ class TestDialectVocabulary:
         ("પશુચારોના", "પશુદાણ", 348, "cattle fodder → cattle feed (concentrate)"),
         ("તૂટેલા અનાજ", "ભરડેલા અનાજ", 550, "broken grain → crushed grain"),
         ("કપાસ", "રુ", 618, "cotton → cottonseed (feed context)"),
+        ("બરબા", "બરસીમ", 700, "hallucinated fodder word → valid fodder term"),
         # Veterinary terms
         ("વંશીય-પશુચિકિત્સા", "પશુ આયુર્વેદ ચિકિત્સા", 353, "ethnoveterinary → ayurvedic vet"),
         # Animal terminology
@@ -349,7 +438,7 @@ class TestPolicyCompleteness:
         """Key terms from Shridhar feedback should be caught by post-processing."""
         critical = [
             "સ્તન", "પાહો", "ચરબી", "ઘન પદાર્થો", "જંતુઓ",
-            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી",
+            "ટોળા", "બળદ", "મખાણ", "માલઈ", "ગર્ભવતી", "બૈડા", "બૈડું",
         ]
         for term in critical:
             result = normalize_gu(f"ગાયમાં {term} છે.")
@@ -358,3 +447,31 @@ class TestPolicyCompleteness:
     def test_replacements_list_built(self):
         """GU_POST_REPLACEMENTS should have base + policy entries."""
         assert len(GU_POST_REPLACEMENTS) >= 30, f"Expected 30+ replacements, got {len(GU_POST_REPLACEMENTS)}"
+
+
+class TestMissingQuantityRepair:
+    """Placeholder quantity slots should be stripped without inventing defaults."""
+
+    def test_feed_placeholder_lines_do_not_invent_defaults(self):
+        text = (
+            "લીલો ચારો: – કિ.ગ્રા. "
+            "સૂકો ચારો: -- કિ.ગ્રા. "
+            "દાણ: – કિલોગ્રામ "
+            "મિનરલ મિશ્રણ: – ગ્રામ "
+            "મીઠું: – ગ્રામ"
+        )
+        result = normalize_gu(text)
+        assert "પંદર થી વીસ કિલોગ્રામ" not in result
+        assert "પાંચ થી સાત કિલોગ્રામ" not in result
+        assert "બે થી ત્રણ કિલોગ્રામ" not in result
+        assert "પચાસ ગ્રામ" not in result
+        assert "ત્રીસ ગ્રામ" not in result
+        assert "--" not in result
+        assert "–" not in result
+        assert "કિ.ગ્રા." not in result
+        assert "બરબા" not in result
+
+    def test_berba_normalizes_to_barseem(self):
+        result = normalize_gu("લીલો ચારો તરીકે બરબા આપો.")
+        assert "બરસીમ" in result
+        assert "બરબા" not in result

@@ -43,6 +43,7 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Keep the tone professional, cordial, and detached; do not become overly familiar or chatty.",
     "Do not translate English address markers such as sister, brother, bhai, ben, madam, or sir into caller labels like બહેન, ભાઈ, મેડમ, or સાહેબ. Use respectful gender-neutral 'આપ' wording instead.",
     "If the English source mentions 'sister' because the caller addressed Sarlaben, do not call the caller બહેન. Omit the address marker or render it as a neutral reference to સરલાબેન only when necessary.",
+    "Never use slang body terms like 'બૈડા/બૈડું/બરડા/બરડું'. Prefer 'પીઠ' for back/flank context and 'શરીર' for general body context.",
     "Prefer 'બાવલું' over 'પાહો' for udder context.",
     "Prefer 'ધાર' over 'ટીપાં' for milk streams.",
     "Use 'ગાભણ' for pregnant livestock context.",
@@ -60,8 +61,13 @@ GU_PREFERRED_TRANSLATION_RULES = [
     "Use 'માનસિક આઘાત' for mental trauma/stress in animals (not 'તણાવ').",
     "Use 'ફીણ' for foam (not 'ફી').",
     "Use 'દવા' for medicine (Gujarati does not pluralise as 'દવાઓ').",
+    "For feed meant for a pregnant animal, say 'ગાભણ પશુ માટેનું દાણ' or 'ગાભણ દાણ'. Never invent 'ગર્ભચારો' and never say 'ગર્ભ માટેનો ચારો'.",
+    "Never use the phrase 'સામાન્ય જાળવણી ચારો'. Always use natural farmer wording such as 'રોજિંદો ઘાસચારો' or 'નિયમિત સૂકો અને લીલો ચારો'.",
+    "In dairy feed context, if ASR/transcription suggests 'સમુદ્રી' but livestock feed is the likely meaning, prefer asking or keeping the term conservative over drifting into marine feed or seaweed advice.",
     "Use 'તેને' (not archaic 'તેણીને') for 'to her/it'.",
     "Use 'ભૌતિક' for physical (examination/condition), not 'શારીરિક'.",
+    "Never use the hallucinated fodder word 'બરબા'. Use 'બરસીમ' (or 'રજકો' where contextually better).",
+    "Never output placeholder quantities like '-', '--', or '–' for feed or dose lines. If exact values are missing, keep the wording non-numeric rather than inventing a quantity.",
 ]
 
 
@@ -113,10 +119,84 @@ GU_TERM_POLICY = _load_gu_term_policy()
 GU_POLICY_REPLACEMENTS = _build_gu_policy_replacements(GU_TERM_POLICY)
 GU_POST_REPLACEMENTS = GU_POST_REPLACEMENTS_BASE + GU_POLICY_REPLACEMENTS
 
+# ── Gender-neutral caller-address guard ─────────────────────────────────────
+# Replace gendered address terms directed at the *caller* with neutral forms.
+# Patterns are boundary-aware: they must NOT match inside "સરલાબેન" or livestock
+# compound terms (e.g. "ભૂખ ભાઈ" is a common animal-behaviour phrase, but
+# "ભાઈ," at the start of a greeting is a caller address).
+# Each tuple: (compiled pattern, replacement).
+GU_GENDER_NEUTRAL_POST: list[tuple[re.Pattern, str]] = [
+    # "ભાઈ" or "ભૈ" as caller address (preceded by start-of-string, comma, space, or period)
+    (re.compile(r"(?<![^\s,।.!?])ભ(?:ાઈ|ૈ)(?=\s*[,।!?]|\s|$)"), ""),
+    # "બહેન" / "બેન" as caller address
+    (re.compile(r"(?<![^\s,।.!?])બ(?:હેન|ેન)(?=\s*[,।!?]|\s|$)"), ""),
+    # "સાહેબ" as caller address
+    (re.compile(r"(?<![^\s,।.!?])સ(?:ા)?હ(?:ે)?બ(?=\s*[,।!?]|\s|$)"), ""),
+    # "મેડમ" / "મૅડમ" / "મૅડ" as caller address
+    (re.compile(r"(?<![^\s,।.!?])મ(?:ે|ૅ|ૅ)ડ(?:મ|)(?=\s*[,।!?]|\s|$)"), ""),
+    # "સર" as standalone caller address (not part of "સરલાબેન")
+    (re.compile(r"(?<![^\s,।.!?])સર(?!લ)(?=\s*[,।!?]|\s|$)"), ""),
+]
+
+GU_WORD_BOUNDARY_START = r"(?<![\u0A80-\u0AFF])"
+GU_WORD_BOUNDARY_END = r"(?![\u0A80-\u0AFF])"
+GU_BODY_SLANG_VARIANTS = r"(?:બૈડા|બૈડું|બૈડુ|બરડા|બરડું|બરડુ)"
+GU_BODY_BACK_SUFFIXES = r"(?:માં|મા|પર)"
+GU_BODY_BACK_POSTPOSITIONS = r"(?:પર|માં|મા|પાછળ)"
+GU_BODY_AGREEMENT_FIXES = [
+    (r"શરીર\s+ઠંડા\s+લાગે\s+છે", "શરીર ઠંડું લાગે છે"),
+    (r"શરીર\s+ઠંડી\s+લાગે\s+છે", "શરીર ઠંડું લાગે છે"),
+    (r"પીઠ\s+ઠંડા\s+લાગે\s+છે", "પીઠ ઠંડી લાગે છે"),
+    (r"પીઠ\s+ઠંડું\s+લાગે\s+છે", "પીઠ ઠંડી લાગે છે"),
+]
+
+_GU_PLACEHOLDER_RE = r"(?:[-–—]{1,3}|[‐‑‒―])"
+
 
 def _fix_dandas(text: str) -> str:
     """Replace Devanagari dandas (।) with periods in TranslateGemma output."""
     return text.replace("।", ".")
+
+
+def _normalize_gu_body_terms(text: str) -> str:
+    """Normalize slang Gujarati body terms with contextual mapping."""
+    out = text
+
+    # Back/flank context: slang + attached locative suffix.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})(?P<suffix>{GU_BODY_BACK_SUFFIXES}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠ{m.group('suffix')}",
+        out,
+    )
+
+    # Back/flank context: slang + spaced postposition/phrase.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+(?P<post>{GU_BODY_BACK_POSTPOSITIONS}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠ {m.group('post')}",
+        out,
+    )
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+ની\s+બાજુ{GU_WORD_BOUNDARY_END}",
+        "પીઠની બાજુ",
+        out,
+    )
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})\s+ના\s+ભાગ(?P<post>{GU_BODY_BACK_SUFFIXES}){GU_WORD_BOUNDARY_END}",
+        lambda m: f"પીઠના ભાગ{m.group('post')}",
+        out,
+    )
+
+    # Default: generic body context.
+    out = re.sub(
+        rf"{GU_WORD_BOUNDARY_START}(?P<lemma>{GU_BODY_SLANG_VARIANTS})(?P<suffix>ના|ની|નું|નો|ને|થી)?{GU_WORD_BOUNDARY_END}",
+        lambda m: f"શરીર{m.group('suffix') or ''}",
+        out,
+    )
+
+    for pat, repl in GU_BODY_AGREEMENT_FIXES:
+        out = re.sub(pat, repl, out)
+
+    return out
 
 
 def _post_normalize_gu_translation(
@@ -128,8 +208,32 @@ def _post_normalize_gu_translation(
     if target_lang.lower() not in ("gujarati", "gu"):
         return text
     out = text
+    out = _normalize_gu_body_terms(out)
     for pat, repl in GU_POST_REPLACEMENTS:
         out = re.sub(pat, repl, out)
+    # Remove placeholder dashes without inventing a quantity.
+    out = re.sub(rf"([:：]\s*){_GU_PLACEHOLDER_RE}(?=\s|$)", r"\1", out)
+
+    # -- Gender-neutral caller-address guard --------------------------------
+    # Strip gendered address terms (ભાઈ, બહેન, સાહેબ, મેડમ, સર) directed at
+    # the caller before the text reaches TTS.
+    for pat, repl in GU_GENDER_NEUTRAL_POST:
+        out = pat.sub(repl, out)
+
+    # -- Scaffold collapse: "Label: value\nLabel: value" → spoken flow ------
+    # Collapse inline label patterns (short non-space word + colon at line start)
+    # into a comma-space connector so they don't create list-like TTS artifacts.
+    out = re.sub(r"(?m)^\s*[^\s:।.!?\n]{1,20}\s*:\s*", ", ", out)
+    # Strip stray leading comma left by the above at the start of text
+    out = re.sub(r"^\s*,\s*", "", out)
+
+    # -- Unicode noise cleanup -----------------------------------------------
+    out = out.replace("\u00A0", " ")   # NBSP → regular space
+    out = out.replace("\u200D", "")    # ZWJ → removed
+    out = out.replace("\u200C", "")    # ZWNJ → removed
+    # Punctuation spacing: no space before ,।.!?
+    out = re.sub(r"\s+([,।.!?])", r"\1", out)
+
     # collapse extra spaces introduced by removals
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
@@ -423,6 +527,7 @@ def _build_openai_pretranslation_messages(source_name: str, source_code: str, te
         "- Your job is faithful pretranslation for safe routing, not correction, completion, or advice.\n"
         "- Preserve uncertainty from the original speech. Do not repair missing words, fill missing slots, or choose a clean interpretation when the audio transcript is ambiguous.\n"
         "- Words that look like human names (e.g. સલાદ, સરલા, ગંગા) are almost always ANIMAL NAMES (cow/buffalo names). Transliterate them as-is, do NOT translate literally.\n"
+        "- If a garbled token does not clearly map to a real medicine, feed, symptom, or service term, do NOT invent a meaning. Keep the translation conservative and set confidence to low.\n"
         "- Kinship words like બેન, બહેન, ભાઈ are often address markers for Sarlaben or filler in phone speech. Do not turn them into the caller's gender. Use 'Sarlaben' only if the caller is clearly addressing the assistant; otherwise omit the address marker.\n"
         "- 'ભાઈ' in livestock context may refer to a male animal (bull/ox), but mark confidence low if the word could also be an address marker.\n"
         "- Prefer veterinary/agricultural meanings only when the term is clear in the original transcript. If choosing the agricultural meaning requires guessing, preserve the uncertain token and set confidence low.\n"

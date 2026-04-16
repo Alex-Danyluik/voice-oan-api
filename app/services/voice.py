@@ -21,6 +21,7 @@ from agents.tools.common import (
     send_nudge_message_raya,
     set_tool_call_nudge_event,
 )
+from agents.tools.terms import get_ambiguity_hints_for_query
 from helpers.utils import get_logger, clean_output_by_language, get_today_date_str
 from app.config import settings
 from app.utils import (
@@ -219,6 +220,74 @@ def _greeting_response(target_lang: str) -> str:
     return _GREETING_RESPONSES.get(target_lang, _GREETING_RESPONSES["gu"])
 
 
+# ── Identity fast-path ────────────────────────────────────────────────────
+_IDENTITY_PHRASES_GU = {
+    "તમારું નામ શું છે", "તારું નામ શું છે", "તમે કોણ છો", "આ સેવા શું છે",
+    "આ કઈ સેવા છે", "તમે ક્યાંથી બોલો છો", "કેમ છો", "કેમ છ", "ક્યાંથી બોલો",
+}
+_IDENTITY_PHRASES_EN = {
+    "what is your name", "who are you", "what is this service", "what service is this",
+    "where are you calling from", "how are you", "what do you do",
+}
+
+_IDENTITY_RESPONSE_EN = (
+    "I am Sarlaben, your Amul AI assistant for dairy farming and animal husbandry. "
+    "Please tell me, how can I help you today?"
+)
+
+_WAIT_MESSAGES = {
+    "gu": "રાહ જુઓ, હું તમારો જવાબ શોધી રહી છું.",
+    "en": "Please wait a moment while I find the answer for you.",
+}
+
+_IDENTITY_DRIFT_PATTERN = re.compile(
+    r"\b(?:OpenAI|ChatGPT|GPT|Claude|Anthropic|large language model|"
+    r"I am an AI assistant made by|I am an AI made by|created by OpenAI|"
+    r"made by Anthropic)\b",
+    re.IGNORECASE,
+)
+
+
+def _fast_path_kind_for_query(text: str) -> Optional[Literal["identity"]]:
+    """Return 'identity' if the query is an identity or social-greeting query, else None."""
+    cleaned = re.sub(r"[.,!?।\s]+", " ", text).strip().lower()
+    if not cleaned:
+        return None
+    if cleaned in _IDENTITY_PHRASES_GU or cleaned in _IDENTITY_PHRASES_EN:
+        return "identity"
+    # Partial match for common Gujarati social greeting fragment
+    for phrase in _IDENTITY_PHRASES_GU:
+        if phrase in cleaned:
+            return "identity"
+    for phrase in _IDENTITY_PHRASES_EN:
+        if phrase in cleaned:
+            return "identity"
+    return None
+
+
+def render_in_flight_wait_message(lang: str) -> str:
+    """Return the localized in-flight wait message for the given language code."""
+    key = (lang or "en").strip().lower()
+    return _WAIT_MESSAGES.get(key, _WAIT_MESSAGES["en"])
+
+
+def _guard_identity_drift(text: str) -> str:
+    """Replace any sentence that leaks a non-Sarlaben AI identity with the canonical line."""
+    if not _IDENTITY_DRIFT_PATTERN.search(text):
+        return text
+    sentences = sentence_segmenter(text.strip())
+    fixed = []
+    replaced = False
+    for s in sentences:
+        if _IDENTITY_DRIFT_PATTERN.search(s):
+            if not replaced:
+                fixed.append(_IDENTITY_RESPONSE_EN)
+                replaced = True
+        else:
+            fixed.append(s)
+    return " ".join(fixed).strip()
+
+
 def _prepare_voice_output(text: str, lang_code: str) -> str:
     """Normalize model output for voice delivery."""
     return clean_output_by_language(text, lang_code)
@@ -275,6 +344,13 @@ def _build_runtime_context_request(deps: FarmerContext) -> ModelRequest:
         runtime_context.replace("Runtime context for this turn:\n", "", 1),
         f"- Tool groups in this run: {', '.join(tool_groups)}",
     ]
+    # Inject ambiguity hints for the agent so it can decide to clarify vs. answer
+    ambiguity_hints = get_ambiguity_hints_for_query(
+        deps.query or "",
+        threshold=settings.ambiguity_match_threshold,
+    )
+    if ambiguity_hints:
+        context_lines.append(f"- Disambiguation rules for terms in this query:\n{ambiguity_hints}")
     return ModelRequest(parts=[UserPromptPart(content="\n".join(context_lines))])
 
 
@@ -499,6 +575,22 @@ async def stream_voice_message(
                 yield _prepare_voice_output(greeting_response, requested_target_lang)
                 return
 
+            # ── Identity fast-path ────────────────────────────────────────
+            # Pure identity / social greeting queries ("What is your name?",
+            # "કેમ છો") — return the canonical Sarlaben identity line directly
+            # without running the full agent pipeline.
+            if _fast_path_kind_for_query(query) == "identity" and not has_meaningful_history:
+                logger.info(
+                    "Identity fast-path triggered; session_id=%s process_id=%s query=%r",
+                    session_id, process_id, query,
+                )
+                identity_resp_en = _IDENTITY_RESPONSE_EN
+                identity_resp_for_caller = await _render_text_for_caller(identity_resp_en, requested_target_lang)
+                id_req, id_resp = _history_pair(_canonical_history_user_text("greeting"), identity_resp_en)
+                await update_message_history(session_id, [*history, id_req, id_resp])
+                yield _prepare_voice_output(identity_resp_for_caller, requested_target_lang)
+                return
+
             # ── Fragment short-circuit ────────────────────────────────────
             # Very short / garbled input (≤3 chars) that isn't a greeting or
             # STT signal — ask the farmer to repeat instead of routing to agent.
@@ -707,6 +799,15 @@ async def stream_voice_message(
             active_agent = voice_agent_signed_in if (signed_in and mobile) else voice_agent
             usage_limits = UsageLimits(request_limit=6 if (signed_in and mobile) else 4)
 
+            if settings.retrieval_audit_log:
+                logger.info(
+                    "RETRIEVAL_AUDIT query=%r session_id=%s process_id=%s target_lang=%s",
+                    processing_query,
+                    session_id,
+                    process_id,
+                    requested_target_lang,
+                )
+
             async with active_agent.run_stream(
                 user_prompt=user_message,
                 message_history=model_input_history,
@@ -718,10 +819,11 @@ async def stream_voice_message(
                 sentence_buffer = ""
                 translation_batch: list[str] = []
                 batch_word_count = 0
-
                 async def _yield_translated_text(text_to_translate: str) -> AsyncGenerator[str, None]:
                     if not text_to_translate:
                         return
+                    # Guard against identity drift before translation
+                    text_to_translate = _guard_identity_drift(text_to_translate)
                     try:
                         async for translated_chunk in translate_text_stream_fast(
                             text=text_to_translate,

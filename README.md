@@ -81,7 +81,7 @@ Query parameters currently expected by the backend:
 - `process_id`: provider-side request/call fragment identifier used for hold/nudge correlation
 
 Response contract:
-- `text/event-stream`
+- `text/plain`
 - streamed assistant text chunks
 - output is optimized for phone/TTS delivery
 - no feedback question is appended at the tail of the stream

@@ -395,10 +395,24 @@ class TestHelperCoverage:
         assert "Known animal tags: 1001, 1002, 1003" in summary
         assert "##" not in summary
 
+    def test_translation_pipeline_prompt_has_unclear_input_confirmation_rules(self):
+        prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        assert "If the message is fully unclear, partly clear, single-word, fragmentary, contradictory, or garbled" in prompt_text
+        assert "Never open with filler phrases like \"I am checking\"" in prompt_text
+        assert "Never output missing-value placeholders" in prompt_text
+        assert "ask the farmer to repeat that word instead of explaining what you think it means" in prompt_text
+        assert "\"feed for the pregnant animal\"" in prompt_text
+        assert "\"samudri\"" in prompt_text
+        assert "ask for clarification rather than assuming a brand name" in prompt_text
+
     @pytest.mark.parametrize("text, expected", [
         ("દૂધમાં ચરબી ઓછી છે.", "ફેટ"),
         ("ગાય ગર્ભવતી છે.", "ગાભણ"),
         ("સારા બળદ નો ઉપયોગ કરો.", "બુલ"),
+        ("મને બૈડું ઠંડું લાગે છે.", "શરીર ઠંડું લાગે છે"),
+        ("પશુના બૈડા પર સોજો છે.", "પીઠ"),
+        ("લીલા ચારમાં બરબા આપો.", "બરસીમ"),
     ])
     def test_current_gu_term_policy_still_holds(self, text, expected):
         result = normalize_gu(text)
@@ -462,6 +476,8 @@ class TestHelperCoverage:
 
 class TestMultiTurnFlows:
     def test_greeting_then_domain_query_reaches_agent(self, monkeypatch):
+        from app.services import voice as voice_module
+
         first_output, history = asyncio.run(
             _collect_stream(
                 query="hello",
@@ -485,6 +501,11 @@ class TestMultiTurnFlows:
 
         async def _mark_called():
             agent_called["value"] = True
+
+        async def _pretranslate(*args, **kwargs):
+            return "My cow has fever", "high"
+
+        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
 
         second_output, _ = asyncio.run(
             _collect_stream(
@@ -582,13 +603,18 @@ class TestMultiTurnFlows:
             history = kwargs["message_history"]
             captured["runtime_context"] = history[0].parts[0].content
             return _FakeResponseStream(
-                chunks=["હું સરલાબેન છું."],
-                new_messages=_make_agent_messages("What is your name?", "I am Sarlaben."),
+                chunks=["ગાયને તાવ છે તો પશુચિકિત્સકનો સંપર્ક કરો."],
+                new_messages=_make_agent_messages("My cow has fever.", "Contact a veterinarian for the cow's fever."),
             )
+
+        async def _pretranslate(*args, **kwargs):
+            return "My cow has fever.", "high"
+
+        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
 
         output, _ = asyncio.run(
             _collect_stream(
-                query="તમારું નામ શું છે?",
+                query="મારી ગાયને તાવ છે",
                 session_id="runtime-context-farmer-summary",
                 history=[],
                 monkeypatch=monkeypatch,
@@ -622,21 +648,24 @@ class TestMultiTurnFlows:
         def _signed_in_run_stream(**kwargs):
             captured["request_limit"] = kwargs["usage_limits"].request_limit
             return _FakeResponseStream(
-                chunks=["હું સરલાબેન છું."],
-                new_messages=_make_agent_messages("What is your name?", "I am Sarlaben."),
+                chunks=["ગાયને તાવ છે તો પશુચિકિત્સકનો સંપર્ક કરો."],
+                new_messages=_make_agent_messages("My cow has fever.", "Contact a veterinarian for the cow's fever."),
             )
 
         def _unexpected_base_run_stream(**kwargs):
             raise AssertionError("anonymous agent should not be used for signed-in session")
 
         monkeypatch.setattr(voice_module, "get_or_fetch_farmer_data", _fake_farmer_data)
+        async def _pretranslate(*args, **kwargs):
+            return "My cow has fever.", "high"
+        monkeypatch.setattr(voice_module, "translate_to_english_with_gpt5_mini", _pretranslate)
         from agents import voice as voice_agent_module
         monkeypatch.setattr(voice_agent_module.voice_agent, "run_stream", _unexpected_base_run_stream)
         monkeypatch.setattr(voice_agent_module.voice_agent_signed_in, "run_stream", _signed_in_run_stream)
 
         output, _ = asyncio.run(
             _collect_stream(
-                query="તમારું નામ શું છે?",
+                query="મારી ગાયને તાવ છે",
                 session_id="signed-in-agent-selection",
                 history=[],
                 monkeypatch=monkeypatch,
