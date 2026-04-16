@@ -322,10 +322,10 @@ def _voice_answer_mode_for_query(text: str) -> Optional[str]:
         return None
     if any(re.search(pattern, cleaned) for pattern in _COMPARISON_PATTERNS):
         return "compact_comparison"
-    if any(re.search(pattern, cleaned) for pattern in _SYMPTOM_PATTERNS):
-        return "action_first_symptom"
     if any(re.search(pattern, cleaned) for pattern in _EXPLAINER_PATTERNS):
         return "compact_explainer"
+    if any(re.search(pattern, cleaned) for pattern in _SYMPTOM_PATTERNS):
+        return "action_first_symptom"
     return None
 
 
