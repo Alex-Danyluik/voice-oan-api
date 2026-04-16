@@ -156,10 +156,10 @@ class TestAmbiguityTerms:
         assert "shed" in result.lower() or "enclosure" in result.lower()
         assert "પાડો" not in result or "NOT પાડો" in result
 
-    def test_samudri_feed_prefers_samruddhi_context(self):
-        """Feed-context સમુદ્રી should be treated as likely સમૃદ્ધિ દાણ, not marine feed."""
+    def test_samudri_feed_avoids_marine_assumption(self):
+        """Feed-context સમુદ્રી should avoid marine advice, but not assume a brand name."""
         result = get_ambiguity_hints_for_query("ગાભણ ભેંસને સમુદ્રી દાણ આપવું?")
-        assert "samruddhi" in result.lower() or "સમૃદ્ધિ" in result
+        assert "repeat" in result.lower() or "clarify" in result.lower() or "સ્પષ્ટ" in result
         assert "seaweed" in result.lower() or "marine feed" in result.lower()
 
 # ---------------------------------------------------------------------------

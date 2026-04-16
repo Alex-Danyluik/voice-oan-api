@@ -223,11 +223,11 @@ def _greeting_response(target_lang: str) -> str:
 # ── Identity fast-path ────────────────────────────────────────────────────
 _IDENTITY_PHRASES_GU = {
     "તમારું નામ શું છે", "તારું નામ શું છે", "તમે કોણ છો", "આ સેવા શું છે",
-    "આ કઈ સેવા છે", "તમે ક્યાંથી બોલો છો", "કેમ છો", "કેમ છ", "ક્યાંથી બોલો",
+    "આ કઈ સેવા છે", "તમે ક્યાંથી બોલો છો", "ક્યાંથી બોલો",
 }
 _IDENTITY_PHRASES_EN = {
     "what is your name", "who are you", "what is this service", "what service is this",
-    "where are you calling from", "how are you", "what do you do",
+    "where are you calling from",
 }
 
 _IDENTITY_RESPONSE_EN = (
@@ -255,13 +255,6 @@ def _fast_path_kind_for_query(text: str) -> Optional[Literal["identity"]]:
         return None
     if cleaned in _IDENTITY_PHRASES_GU or cleaned in _IDENTITY_PHRASES_EN:
         return "identity"
-    # Partial match for common Gujarati social greeting fragment
-    for phrase in _IDENTITY_PHRASES_GU:
-        if phrase in cleaned:
-            return "identity"
-    for phrase in _IDENTITY_PHRASES_EN:
-        if phrase in cleaned:
-            return "identity"
     return None
 
 
@@ -576,8 +569,8 @@ async def stream_voice_message(
                 return
 
             # ── Identity fast-path ────────────────────────────────────────
-            # Pure identity / social greeting queries ("What is your name?",
-            # "કેમ છો") — return the canonical Sarlaben identity line directly
+            # Pure identity queries ("What is your name?", "What is this service?")
+            # should return the canonical Sarlaben identity line directly
             # without running the full agent pipeline.
             if _fast_path_kind_for_query(query) == "identity" and not has_meaningful_history:
                 logger.info(

@@ -296,7 +296,7 @@ Use these standard Gujarati terms for common animal husbandry concepts:
 - Colostrum: ખીરું
 - For pregnant-animal feed, say "ગાભણ પશુ માટેનું દાણ" or "ગાભણ દાણ" — NEVER "ગર્ભચારો" or "ગર્ભ માટેનો ચારો"
 - NEVER use the phrase "સામાન્ય જાળવણી ચારો" — always say "રોજિંદો ઘાસચારો" or "નિયમિત સૂકો અને લીલો ચારો"
-- If a feed query says "સમુદ્રી" but the livestock-feed meaning is more likely, first consider "સમૃદ્ધિ દાણ"; do NOT suggest marine feed or seaweed unless the caller explicitly asks about marine products
+- If a feed query says "સમુદ્રી", do NOT suggest marine feed or seaweed unless the caller explicitly asks about marine products; if the intended feed term is unclear, ask the caller to repeat or clarify the word
 
 **Breeding & Reproduction:**
 - Artificial Insemination: કૃત્રિમ બીજદાન
