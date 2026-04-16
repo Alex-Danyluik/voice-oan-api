@@ -395,24 +395,36 @@ def _build_compact_farmer_summary(envelope: Optional[FarmerDataEnvelope]) -> str
     return "\n".join(lines)
 
 
-def should_translate_batch(batch_text: str, word_count: int) -> bool:
-    min_words = 15
-    max_words = 80
-
-    if word_count < min_words:
-        text_end = batch_text.rstrip()
-        return text_end.endswith(('.', '!', '?')) and word_count >= 5
-    if word_count >= max_words:
-        return True
-
+def should_translate_batch(
+    batch_text: str,
+    word_count: int,
+    is_first_batch: bool = False,
+) -> bool:
+    """Decide whether the accumulated batch should be flushed for translation."""
     text_end = batch_text.rstrip()
+    ends_sentence = text_end.endswith(('.', '!', '?', ':'))
+
+    # Phase 1: first batch — get first audio to the caller fast.
+    if is_first_batch:
+        return ends_sentence and word_count >= 3
+
+    # Phase 2: subsequent batches — balance quality vs latency.
+    if word_count >= 40:
+        return True  # force flush, don't hoard
+
+    if word_count < 8:
+        return ends_sentence and word_count >= 5
+
+    # 8-40 words: flush on any natural boundary.
+    if ends_sentence:
+        return True
     if text_end.endswith('\n\n'):
         return True
     if text_end.endswith('\n') and len(batch_text.split('\n')) > 1:
         last_line = batch_text.rstrip('\n').split('\n')[-1].strip()
         if last_line.startswith(('-', '*', '•')) or re.match(r'^\d+\.', last_line):
             return True
-    return text_end.endswith(('.', '!', '?'))
+    return False
 
 # Langfuse Sessions: same session_id groups all traces for one conversation (session replay, session-level metrics).
 def _langfuse_session_context(session_id: str, user_id: str, process_id: Optional[str] = None):
@@ -882,7 +894,7 @@ async def stream_voice_message(
                                 batch_word_count += len(sentence.split())
 
                             batch_text = "".join(translation_batch)
-                            if should_translate_batch(batch_text, batch_word_count):
+                            if should_translate_batch(batch_text, batch_word_count, is_first_batch=not first_text_chunk_received):
                                 async for translated_chunk in _yield_translated_text(batch_text):
                                     if (
                                         not first_text_chunk_received

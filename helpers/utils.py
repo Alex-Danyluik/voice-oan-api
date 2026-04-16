@@ -292,7 +292,7 @@ def normalize_voice_output(
     # Flatten line breaks into spoken text.
     out = re.sub(r"\s*\n+\s*", " ", out)
     out = re.sub(r"[ \t]{2,}", " ", out)
-    return out.strip()
+    return out
 
 def post_process_translation(translation: str) -> str:
     """Post process translation.
