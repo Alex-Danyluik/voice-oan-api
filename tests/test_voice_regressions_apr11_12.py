@@ -315,7 +315,8 @@ class TestHelperCoverage:
         assert "get_farmer_profile" not in base_tool_names
 
     def test_voice_system_prompt_is_static(self):
-        assert "Provided in runtime context message." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Today's date:" not in STATIC_VOICE_SYSTEM_PROMPT
+        assert "## Farmer Context" not in STATIC_VOICE_SYSTEM_PROMPT
         assert "{{today_date}}" not in STATIC_VOICE_SYSTEM_PROMPT
         assert "{{farmer_context}}" not in STATIC_VOICE_SYSTEM_PROMPT
 

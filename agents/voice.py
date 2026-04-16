@@ -14,10 +14,6 @@ load_dotenv()
 VOICE_SYSTEM_PROMPT_NAME = "voice_system_translation_pipeline_en"
 STATIC_VOICE_SYSTEM_PROMPT = get_prompt(
     VOICE_SYSTEM_PROMPT_NAME,
-    context={
-        "today_date": "Provided in runtime context message.",
-        "farmer_context": None,
-    },
 )
 
 def _build_voice_agent(name: str, tools):
