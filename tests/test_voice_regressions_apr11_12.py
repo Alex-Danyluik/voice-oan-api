@@ -383,10 +383,28 @@ class TestHelperCoverage:
         assert "Give one short contrast sentence" in content
         assert "Do not enumerate." in content
 
+    def test_runtime_context_adds_compact_explainer_mode(self):
+        deps = FarmerContext(query="What is mastitis?")
+        request = _build_runtime_context_request(deps)
+        content = request.parts[0].content
+        assert "Voice answer mode: compact explainer." in content
+        assert "Do not teach the full topic." in content
+
+    def test_runtime_context_adds_action_first_symptom_mode(self):
+        deps = FarmerContext(query="My cow has fever")
+        request = _build_runtime_context_request(deps)
+        content = request.parts[0].content
+        assert "Voice answer mode: action-first symptom response." in content
+        assert "Start with the most useful immediate action" in content
+
     @pytest.mark.parametrize("query, expected", [
         ("What is the difference between A2 milk and normal milk?", "compact_comparison"),
+        ("What is mastitis?", "compact_explainer"),
         ("Compare buffalo milk and cow milk", "compact_comparison"),
-        ("My cow has fever", None),
+        ("My cow has fever", "action_first_symptom"),
+        ("My buffalo is not eating", "action_first_symptom"),
+        ("What is SNF in milk?", "compact_explainer"),
+        ("Hello", None),
     ])
     def test_voice_answer_mode_for_query(self, query, expected):
         assert _voice_answer_mode_for_query(query) == expected

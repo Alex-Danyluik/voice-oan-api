@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.translation import translate_to_english_with_gpt5_mini, translate_text
-from app.services.voice import stream_voice_message
+from app.services.voice import _history_pair, stream_voice_message
 from app.services.stt_signals import generate_stt_signal_response
 
 
@@ -615,3 +615,26 @@ def test_live_tool_triggered_nudge_only_on_retrieval_path(monkeypatch):
 
     assert identity_output
     assert nudges == []
+
+
+def test_live_a2_comparison_query_stays_compact_and_non_enumerated(monkeypatch):
+    history = list(
+        _history_pair(
+            "hello",
+            "Hello. Please tell me what problem your animal has.",
+        )
+    )
+
+    output, _ = asyncio.run(
+        _collect_live_stream(
+            query="અ સલાબેન મારે મારી મારે એ ટુ મિલ્ક એ ટુ મિલ્ક અને નોર્મલ મિલ્ક ન તફાવત મને કહેશો",
+            session_id="live-a2-compact-comparison",
+            history=history,
+            monkeypatch=monkeypatch,
+        )
+    )
+
+    assert output
+    assert len(output) < 700
+    assert _contains_none(output, ["એક.", "બે.", "ત્રણ.", "ચાર.", "પાંચ.", "છ."])
+    assert _contains_none(output, ["અહીં", "સારાંશ", "તફાવત અહીં છે", "જો આપ મને જણાવશો"])
