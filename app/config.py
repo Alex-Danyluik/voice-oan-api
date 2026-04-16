@@ -73,8 +73,6 @@ class Settings(BaseSettings):
     openai_pretranslation_timeout_seconds: float = float(os.getenv("OPENAI_PRETRANSLATION_TIMEOUT_SECONDS", "10.0"))
 
     # Voice pipeline behavioral flags
-    # VOICE_POST_TRIM: trim agent English output to ≤3 sentences before translation
-    voice_post_trim: bool = _get_bool_env("VOICE_POST_TRIM", default=True)
     # RETRIEVAL_AUDIT_LOG: log intent/retrieval_called/query per turn for replay analysis
     retrieval_audit_log: bool = _get_bool_env("RETRIEVAL_AUDIT_LOG", default=False)
     # AMBIGUITY_MATCH_THRESHOLD: fuzzy-match cutoff for ambiguity_terms.json (0.0–1.0)

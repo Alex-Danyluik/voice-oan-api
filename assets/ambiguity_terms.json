@@ -100,15 +100,13 @@
   },
   {
     "gu_terms": [
-      "સમૃદ્ધિ",
-      "samruddhi",
       "સમુદ્રી દાણ",
       "સમુદ્રી",
       "samudri",
       "samudri dan"
     ],
     "type": "hardcode",
-    "rule": "In Gujarati dairy feed context, 'સમૃદ્ધિ દાણ' / Samruddhi is a common cattle-feed term. If ASR or translation yields 'સમુદ્રી' / samudri in a feed question about cows or buffaloes, treat it as likely 'સમૃદ્ધિ દાણ' unless the caller explicitly asks about fish feed, marine products, or seaweed. Never answer with marine feed or seaweed advice for buffaloes by default."
+    "rule": "If ASR or translation yields 'સમુદ્રી' / samudri in a feed question about cows or buffaloes, do not drift into marine feed or seaweed advice by default. If the intended feed term is uncertain, ask the caller to repeat or clarify the word instead of assuming a brand or product."
   },
   {
     "gu_terms": [
