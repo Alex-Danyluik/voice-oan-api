@@ -26,11 +26,11 @@ def _build_voice_agent(name: str, tools):
         retries=3,
         tools=tools,
         system_prompt=STATIC_VOICE_SYSTEM_PROMPT,
-        end_strategy='early',
+        end_strategy='exhaustive',
         model_settings=ModelSettings(
             max_tokens=3600,
             temperature=0.0,
-            parallel_tool_calls=False,
+            parallel_tool_calls=True,
        )
     )
 
