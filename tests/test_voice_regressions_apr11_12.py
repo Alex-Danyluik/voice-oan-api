@@ -350,6 +350,10 @@ class TestHelperCoverage:
         assert "Never infer or assign the caller's gender" in STATIC_VOICE_SYSTEM_PROMPT
         assert "This is a live phone call, not a chat or article." in STATIC_VOICE_SYSTEM_PROMPT
         assert "Default to one short sentence." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Think like a voice oracle." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "First identify the caller's immediate need." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "If the intent is unclear, ask one short clarification question." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "If the situation sounds urgent, lead with the most useful immediate action." in STATIC_VOICE_SYSTEM_PROMPT
         assert "Do not use colons, headings, labels, hyphens, or en dashes" in STATIC_VOICE_SYSTEM_PROMPT
         assert "Do not organize the answer as \"one\", \"two\", \"three\"" in STATIC_VOICE_SYSTEM_PROMPT
 
@@ -374,6 +378,13 @@ class TestHelperCoverage:
         assert "Signed-in session: yes" in content
         assert "Normalized mobile: 9723293369" in content
         assert "Farmer context summary:" in content
+
+    def test_voice_examples_are_abstract_and_voice_first(self):
+        assert "User: `compare two things`" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "User: `animal has an urgent symptom`" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "User: `unclear word for feed or medicine`" in STATIC_VOICE_SYSTEM_PROMPT
+        assert "The main difference is in the protein type." in STATIC_VOICE_SYSTEM_PROMPT
+        assert "Call a veterinarian quickly" in STATIC_VOICE_SYSTEM_PROMPT
 
     def test_runtime_context_adds_compact_comparison_mode(self):
         deps = FarmerContext(query="What is the difference between A2 milk and normal milk?")
@@ -454,10 +465,10 @@ class TestHelperCoverage:
         prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"
         prompt_text = prompt_path.read_text(encoding="utf-8")
         assert "## Voice Examples" in prompt_text
-        assert "User: `What is the difference between A2 milk and normal milk?`" in prompt_text
-        assert "Assistant: `A2 milk differs mainly in the type of beta casein protein." in prompt_text
-        assert "User: `samudri dan for buffalo`" in prompt_text
-        assert "Assistant: `Please repeat that feed name once. I did not understand it clearly.`" in prompt_text
+        assert "User: `compare two things`" in prompt_text
+        assert "Assistant: `The main difference is in the protein type." in prompt_text
+        assert "User: `unclear word for feed or medicine`" in prompt_text
+        assert "Assistant: `Please repeat that word once. I did not understand it clearly.`" in prompt_text
         assert "User: `No, that is all`" in prompt_text
         assert "Assistant: `All right. You can call again if you need help.`" in prompt_text
 
