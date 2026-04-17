@@ -36,6 +36,8 @@ from app.services.voice import (
     _is_signed_in_session,
     _is_hold_message,
     _voice_answer_mode_for_query,
+    extract_translation_units,
+    should_translate_batch,
 )
 from agents.deps import FarmerContext
 from agents.models.farmer import FarmerDataEnvelope, FarmerRecord
@@ -426,14 +428,40 @@ class TestHelperCoverage:
                 )
             ],
             source="cache",
+            stale=True,
+            refreshAfter="2026-04-18T00:00:00+00:00",
         )
         summary = _build_compact_farmer_summary(envelope)
         assert "Farmer records matched: 1" in summary
         assert "Farmer data source: cache" in summary
+        assert "Farmer cache state: stale" in summary
+        assert "Farmer refresh after: 2026-04-18T00:00:00+00:00" in summary
         assert "Farmer name: Rameshbhai" in summary
         assert "Farmer code available: yes" in summary
         assert "Known animal tags: 1001, 1002, 1003" in summary
         assert "##" not in summary
+
+    def test_extract_translation_units_force_splits_oversized_buffer(self):
+        text = (
+            "This is a very long answer without a sentence break that keeps going and going "
+            "so the caller should not have to wait forever before translation starts because "
+            "we need an earlier forced split in the buffered text for voice delivery "
+            * 6
+        )
+        ready, remaining = extract_translation_units(text)
+        assert ready
+        assert all(len(unit) <= 600 for unit in ready)
+        assert remaining != text
+
+    def test_extract_translation_units_breaks_at_structural_headers(self):
+        text = "Call a veterinarian quickly:\n### 1. Base feed\nGive roughage and water"
+        ready, remaining = extract_translation_units(text)
+        assert ready == ["Call a veterinarian quickly:"]
+        assert remaining.startswith("### 1. Base feed")
+
+    def test_should_translate_batch_forces_flush_on_large_char_batch(self):
+        batch_text = "word " * 140
+        assert should_translate_batch(batch_text, word_count=20, is_first_batch=False) is True
 
     def test_translation_pipeline_prompt_has_unclear_input_confirmation_rules(self):
         prompt_path = Path(__file__).resolve().parents[1] / "assets" / "prompts" / "voice_system_translation_pipeline_en.md"

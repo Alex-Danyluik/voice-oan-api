@@ -54,15 +54,34 @@ class FarmerDataEnvelope(BaseModel):
     farmers: List[FarmerRecord] = []
     fetchedAt: Optional[str] = None
     source: Optional[str] = None  # "cache" | "api"
+    stale: bool = False
+    staleReason: Optional[str] = None
+    refreshAfter: Optional[str] = None
+    lookupStatus: Optional[str] = None  # "found" | "not_found"
 
     @classmethod
-    def from_records(cls, records: list, source: str = "api") -> "FarmerDataEnvelope":
+    def from_records(
+        cls,
+        records: list,
+        source: str = "api",
+        lookup_status: str = "found",
+    ) -> "FarmerDataEnvelope":
         """Create envelope from raw record dicts."""
         farmers = [FarmerRecord.model_validate(r) if isinstance(r, dict) else r for r in records]
         return cls(
             farmers=farmers,
             fetchedAt=datetime.now(timezone.utc).isoformat(),
             source=source,
+            lookupStatus=lookup_status,
+        )
+
+    @classmethod
+    def not_found(cls, source: str = "api") -> "FarmerDataEnvelope":
+        return cls(
+            farmers=[],
+            fetchedAt=datetime.now(timezone.utc).isoformat(),
+            source=source,
+            lookupStatus="not_found",
         )
 
     def to_summary(self) -> FarmerSummary:
