@@ -87,6 +87,13 @@ VOICE_TRANSLATION_SOFT_SPLIT_MIN_CHARS = 180
 def extract_complete_sentences(text: str):
     if not text:
         return [], ""
+    inline_structural_match = re.search(r"(?=\s#{1,6}\s)|(?=\n#{1,6}\s)|(?=\n\d+\.\s)|(?=\n[-*•]\s)", text)
+    if inline_structural_match and inline_structural_match.start() > 0:
+        split_at = inline_structural_match.start()
+        head = text[:split_at].rstrip()
+        tail = text[split_at:].lstrip()
+        if head:
+            return [head], tail
     structural_match = re.search(r"\n(?=(?:#{1,6}\s|[-*•]\s|\d+\.\s))", text)
     if structural_match:
         split_at = structural_match.start()
@@ -106,19 +113,30 @@ def _split_voice_batch_text(text: str, max_chars: int = VOICE_TRANSLATION_BATCH_
 
     window = text[:max_chars]
     split_at = -1
-    for pattern in ("\n\n", "\n", ". ", "? ", "! ", ": ", "; ", "। ", "。 "):
+    for pattern in ("\n\n", "\n", ". ", "? ", "! ", ": ", "; ", "। ", "。 ", "### ", "## ", "# "):
         idx = window.rfind(pattern)
         if idx >= VOICE_TRANSLATION_SOFT_SPLIT_MIN_CHARS:
             split_at = idx + len(pattern.rstrip())
             break
 
     if split_at < 0:
-        idx = window.rfind(" ")
-        if idx >= VOICE_TRANSLATION_SOFT_SPLIT_MIN_CHARS:
-            split_at = idx
+        structural_markers = (
+            r"\n(?=#{1,6}\s)",
+            r"\n(?=\d+\.\s)",
+            r"\n(?=[-*•]\s)",
+            r"(?<=:)\s+",
+            r"(?<=;)\s+",
+        )
+        for pattern in structural_markers:
+            matches = list(re.finditer(pattern, window))
+            if matches:
+                idx = matches[-1].start()
+                if idx >= VOICE_TRANSLATION_SOFT_SPLIT_MIN_CHARS:
+                    split_at = idx
+                    break
 
     if split_at < 0:
-        split_at = max_chars
+        return text, ""
 
     return text[:split_at].rstrip(), text[split_at:].lstrip()
 
@@ -1031,34 +1049,47 @@ async def stream_voice_message(
                         ready_units, remaining = extract_translation_units(sentence_buffer)
                         if ready_units:
                             for unit in ready_units:
-                                translation_batch.append(unit)
-                                batch_word_count += len(unit.split())
+                                candidate_units = [unit]
+                                if len(unit) >= VOICE_TRANSLATION_BATCH_CHAR_LIMIT:
+                                    candidate_units = []
+                                    remaining_unit = unit
+                                    while remaining_unit:
+                                        head, tail = _split_voice_batch_text(remaining_unit)
+                                        if not tail or head == remaining_unit:
+                                            candidate_units.append(remaining_unit)
+                                            break
+                                        candidate_units.append(head)
+                                        remaining_unit = tail
 
-                            batch_text = "".join(translation_batch)
-                            if should_translate_batch(batch_text, batch_word_count, is_first_batch=not first_text_chunk_received):
-                                async for translated_chunk in _yield_translated_text(batch_text):
-                                    if (
-                                        not first_text_chunk_received
-                                        and isinstance(translated_chunk, str)
-                                        and translated_chunk
-                                        and translated_chunk.strip()
-                                    ):
-                                        first_text_chunk_received = True
-                                        if nudge_task: nudge_task.cancel()
-                                        logger.info(
-                                            "Nudge canceled (first translated chunk received); session_id=%s process_id=%s",
-                                            session_id,
-                                            process_id,
-                                        )
-                                        try:
-                                            await nudge_task
-                                        except asyncio.CancelledError:
-                                            pass
-                                    if await _request_is_stale("before_translated_yield"):
-                                        break
-                                    yield translated_chunk
-                                translation_batch = []
-                                batch_word_count = 0
+                                for candidate in candidate_units:
+                                    translation_batch.append(candidate)
+                                    batch_word_count += len(candidate.split())
+                                    batch_text = "".join(translation_batch)
+
+                                    if should_translate_batch(batch_text, batch_word_count, is_first_batch=not first_text_chunk_received):
+                                        async for translated_chunk in _yield_translated_text(batch_text):
+                                            if (
+                                                not first_text_chunk_received
+                                                and isinstance(translated_chunk, str)
+                                                and translated_chunk
+                                                and translated_chunk.strip()
+                                            ):
+                                                first_text_chunk_received = True
+                                                if nudge_task: nudge_task.cancel()
+                                                logger.info(
+                                                    "Nudge canceled (first translated chunk received); session_id=%s process_id=%s",
+                                                    session_id,
+                                                    process_id,
+                                                )
+                                                try:
+                                                    await nudge_task
+                                                except asyncio.CancelledError:
+                                                    pass
+                                            if await _request_is_stale("before_translated_yield"):
+                                                break
+                                            yield translated_chunk
+                                        translation_batch = []
+                                        batch_word_count = 0
 
                             sentence_buffer = remaining
 

@@ -150,6 +150,11 @@ _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 # Matches digit sequences of 10+ digits (tag numbers, phone numbers)
 _LONG_DIGIT_RE = re.compile(r"\d{10,}")
 
+# Numeric ranges such as 20-25 or 350–400
+_RANGE_RE = re.compile(
+    r"(?<!\d[-–—])(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)(?![-–—]\d)"
+)
+
 
 def normalize_numbers_for_tts(text: str) -> str:
     """Replace digit sequences in Gujarati text with Gujarati words.
@@ -160,6 +165,21 @@ def normalize_numbers_for_tts(text: str) -> str:
     """
     if not text:
         return text
+
+    def _replace_range(m: re.Match) -> str:
+        left = m.group(1)
+        right = m.group(2)
+
+        def _to_words(s: str) -> str:
+            if "." in s:
+                return number_to_gujarati(float(s))
+            return number_to_gujarati(int(s))
+
+        return f"{_to_words(left)} થી {_to_words(right)}"
+
+    # Convert numeric ranges before plain number substitution so 350-400
+    # does not survive as a glued punctuation sequence for TTS.
+    text = _RANGE_RE.sub(_replace_range, text)
 
     # First pass: convert long digit sequences (tags, phone numbers) to digit-by-digit
     def _replace_long(m: re.Match) -> str:

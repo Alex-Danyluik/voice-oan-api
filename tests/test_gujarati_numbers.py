@@ -179,11 +179,20 @@ class TestTextNormalization:
         assert "ત્રણસો સડસઠ" in result
 
     def test_range_numbers(self):
-        """Numbers separated by dash should each convert independently."""
+        """Numeric ranges should be spoken naturally as a Gujarati range."""
         text = "2-3 દિવસ"
         result = normalize_numbers_for_tts(text)
-        assert "બે" in result
-        assert "ત્રણ" in result
+        assert result == "બે થી ત્રણ દિવસ"
+
+    def test_large_range_numbers(self):
+        text = "350-400 કિલો"
+        result = normalize_numbers_for_tts(text)
+        assert result == "ત્રણસો પચાસ થી ચારસો કિલો"
+
+    def test_en_dash_range_numbers(self):
+        text = "20–25 દિવસ"
+        result = normalize_numbers_for_tts(text)
+        assert result == "વીસ થી પચ્ચીસ દિવસ"
 
 
 # ---------------------------------------------------------------------------
