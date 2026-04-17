@@ -4,13 +4,33 @@ Conversation state signaling tool.
 Lets the LLM tell the telephony layer when the call is wrapping up
 or when the caller seems frustrated, so RAYA can handle the session
 lifecycle (e.g. graceful hangup after closing).
+
+When conversation_closing is signaled, the voice stream appends
+"Goodbye." after the agent response so RAYA disconnects the call.
 """
-from typing import Literal
+import contextvars
+from typing import Literal, Optional
 from pydantic_ai import RunContext
 from helpers.utils import get_logger
 from agents.deps import FarmerContext
 
 logger = get_logger(__name__)
+
+# Per-request flag — set by the tool, read by the voice stream after
+# the agent finishes to decide whether to append "Goodbye."
+_conversation_closing_flag: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_conversation_closing_flag", default=False
+)
+
+
+def set_conversation_closing_flag(value: bool = False) -> contextvars.Token:
+    """Reset the flag at the start of each request."""
+    return _conversation_closing_flag.set(value)
+
+
+def is_conversation_closing() -> bool:
+    """Check if the LLM signaled conversation_closing during this request."""
+    return _conversation_closing_flag.get(False)
 
 
 def signal_conversation_state(
@@ -42,4 +62,6 @@ def signal_conversation_state(
         event,
         ctx.deps.session_id,
     )
+    if event == "conversation_closing":
+        _conversation_closing_flag.set(True)
     return f"State {event} recorded."

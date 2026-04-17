@@ -25,6 +25,7 @@ from agents.tools.common import (
     send_nudge_message_raya,
     set_tool_call_nudge_event,
 )
+from agents.tools.conversation_state import set_conversation_closing_flag
 from agents.tools.terms import get_ambiguity_hints_for_query
 from helpers.utils import get_logger, clean_output_by_language, get_today_date_str
 from app.config import settings
@@ -1170,6 +1171,28 @@ async def stream_voice_message(
 
                 logger.info(f"Streaming complete for session {session_id}")
                 new_messages = response_stream.new_messages()
+
+            # If the LLM called signal_conversation_state("conversation_closing"),
+            # append the termination token so RAYA disconnects the call.
+            # We scan the agent's new messages for the tool call rather than
+            # using contextvars, because pydantic-ai runs tools in child tasks
+            # whose contextvar writes don't propagate back to the caller.
+            closing = any(
+                getattr(part, "tool_name", None) == "signal_conversation_state"
+                and "conversation_closing" in (getattr(part, "args_as_json_str", lambda: "")() if callable(getattr(part, "args_as_json_str", None)) else str(getattr(part, "args", "")))
+                for msg in new_messages
+                for part in (getattr(msg, "parts", None) or [])
+            )
+            if closing and not await _request_is_stale("before_goodbye"):
+                goodbye = TELEPHONY_TERMINATE_CALL_TOKEN.get(
+                    requested_target_lang,
+                    TELEPHONY_TERMINATE_CALL_TOKEN["en"],
+                )
+                logger.info(
+                    "Appending goodbye after conversation_closing signal; session_id=%s process_id=%s",
+                    session_id, process_id,
+                )
+                yield " " + goodbye
 
             if await _request_is_stale("before_history_write"):
                 return
