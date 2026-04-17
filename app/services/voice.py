@@ -47,7 +47,6 @@ from app.services.translation import (
     INDIAN_LANGUAGES,
     OPENAI_PRETRANSLATION_MODEL,
     translate_text,
-    translate_text_stream_fast,
     translate_to_english_with_gpt5_mini,
     translate_to_english_with_structured_fallback,
 )
@@ -986,22 +985,21 @@ async def stream_voice_message(
                 async def _yield_translated_text(text_to_translate: str) -> AsyncGenerator[str, None]:
                     if not text_to_translate:
                         return
-                    # Guard against identity drift before translation
                     text_to_translate = _guard_identity_drift(text_to_translate)
                     try:
-                        async for translated_chunk in translate_text_stream_fast(
+                        translated = await translate_text(
                             text=text_to_translate,
                             source_lang="english",
                             target_lang=requested_target_lang,
-                        ):
-                            if await _request_is_stale("during_output_translation"):
-                                return
-                            cleaned_chunk = (
-                                _prepare_voice_output(translated_chunk, requested_target_lang)
-                                if isinstance(translated_chunk, str) and translated_chunk
-                                else translated_chunk
-                            )
-                            yield cleaned_chunk
+                        )
+                        if await _request_is_stale("during_output_translation"):
+                            return
+                        cleaned = (
+                            _prepare_voice_output(translated, requested_target_lang)
+                            if isinstance(translated, str) and translated
+                            else translated
+                        )
+                        yield cleaned
                     except Exception as e:
                         logger.error(
                             "Translation pipeline output translation failed for session_id=%s error=%s",

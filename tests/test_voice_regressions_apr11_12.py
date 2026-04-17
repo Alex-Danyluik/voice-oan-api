@@ -303,11 +303,11 @@ class TestHelperCoverage:
         assert _has_meaningful_history(history) is False
 
     def test_voice_agent_runtime_config(self):
-        assert voice_agent.end_strategy == "early"
+        assert voice_agent.end_strategy == "exhaustive"
         assert voice_agent.model_settings["max_tokens"] == 3600
         assert voice_agent.model_settings["temperature"] == 0.0
-        assert voice_agent.model_settings["parallel_tool_calls"] is False
-        assert voice_agent_signed_in.end_strategy == "early"
+        assert voice_agent.model_settings["parallel_tool_calls"] is True
+        assert voice_agent_signed_in.end_strategy == "exhaustive"
         assert voice_agent_signed_in.model_settings["max_tokens"] == 3600
 
     def test_signed_in_agent_has_farmer_tools(self):
