@@ -854,7 +854,11 @@ async def translate_text_stream_fast(
                                             target_lang,
                                             strip_outer=False,
                                         )
-                                        content = normalize_voice_output(content, target_lang)
+                                        content = normalize_voice_output(
+                                            content,
+                                            target_lang,
+                                            streaming=True,
+                                        )
                                         translated_parts.append(content)
                                         yield content
                                 except json.JSONDecodeError:
@@ -914,7 +918,11 @@ async def translate_text_stream_fast(
                                             target_lang,
                                             strip_outer=False,
                                         )
-                                        content = normalize_voice_output(content, target_lang)
+                                        content = normalize_voice_output(
+                                            content,
+                                            target_lang,
+                                            streaming=True,
+                                        )
                                         translated_parts.append(content)
                                         yield content
                                 except json.JSONDecodeError:

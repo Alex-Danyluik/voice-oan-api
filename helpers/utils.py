@@ -247,6 +247,7 @@ def normalize_voice_output(
     lang_code: str | None,
     *,
     replace_slash: bool = True,
+    streaming: bool = False,
 ) -> str:
     """Normalize model output for voice playback before language filtering."""
     if not text:
@@ -257,6 +258,19 @@ def normalize_voice_output(
 
     if lang == "gu":
         out = normalize_numbers_for_tts(out)
+
+    if streaming:
+        out = _replace_voice_abbreviations(out, lang)
+        out = _remove_quantity_placeholders(out)
+        out = re.sub(r"\.{3,}", ".", out)
+        out = re.sub(r"([!?])\1+", r"\1", out)
+        out = re.sub(r"([,;:])\1+", r"\1", out)
+        if replace_slash:
+            if lang == "gu":
+                out = out.replace("/", " અથવા ")
+            else:
+                out = out.replace("/", " or ")
+        return out
 
     # Strip markdown and structural noise that should never be spoken.
     out = out.replace("**", "").replace("__", "").replace("`", "").replace("~", "")
