@@ -91,15 +91,15 @@ def extract_complete_sentences(text: str):
     inline_structural_match = re.search(r"(?=\s#{1,6}\s)|(?=\n#{1,6}\s)|(?=\n\d+\.\s)|(?=\n[-*•]\s)", text)
     if inline_structural_match and inline_structural_match.start() > 0:
         split_at = inline_structural_match.start()
-        head = text[:split_at].rstrip()
-        tail = text[split_at:].lstrip()
+        head = text[:split_at]
+        tail = text[split_at:]
         if head:
             return [head], tail
     structural_match = re.search(r"\n(?=(?:#{1,6}\s|[-*•]\s|\d+\.\s))", text)
     if structural_match:
         split_at = structural_match.start()
-        head = text[:split_at].rstrip()
-        tail = text[split_at:].lstrip()
+        head = text[:split_at]
+        tail = text[split_at:]
         if head:
             return [head], tail
     sentences = sentence_segmenter(text)
@@ -139,7 +139,7 @@ def _split_voice_batch_text(text: str, max_chars: int = VOICE_TRANSLATION_BATCH_
     if split_at < 0:
         return text, ""
 
-    return text[:split_at].rstrip(), text[split_at:].lstrip()
+    return text[:split_at], text[split_at:]
 
 
 def extract_translation_units(text: str):
