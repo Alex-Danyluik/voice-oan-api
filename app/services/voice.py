@@ -259,6 +259,11 @@ TELEPHONY_TERMINATE_CALL_TOKEN = {
     "en": "Goodbye.",
 }
 
+TRANSLATION_TROUBLE_MESSAGE = {
+    "gu": "માફ કરશો, હાલમાં તમારા સવાલનો જવાબ આપવામાં તકલીફ થઈ રહી છે. કૃપા કરીને થોડા સમય પછી ફરી કોલ કરો.",
+    "en": "I'm having some trouble answering your question right now, please call in some time.",
+}
+
 
 def _has_meaningful_history(history: list) -> bool:
     """Return True when the session already contains non-trivial conversation."""
@@ -430,7 +435,10 @@ async def _render_text_for_caller(text_en: str, target_lang: str) -> str:
             text_en[:120],
             e,
         )
-        return _prepare_voice_output(text_en, "en")
+        return TRANSLATION_TROUBLE_MESSAGE.get(
+            normalized_target,
+            TRANSLATION_TROUBLE_MESSAGE["en"],
+        )
 
 
 def _history_pair(user_text: str, assistant_text: str) -> tuple[ModelRequest, ModelResponse]:
@@ -1008,7 +1016,11 @@ async def stream_voice_message(
                             session_id,
                             e,
                         )
-                        yield _prepare_voice_output(text_to_translate, "en")
+                        trouble = TRANSLATION_TROUBLE_MESSAGE.get(
+                            requested_target_lang,
+                            TRANSLATION_TROUBLE_MESSAGE["en"],
+                        )
+                        yield trouble
 
                 try:
                     async for chunk in stream_iter:
