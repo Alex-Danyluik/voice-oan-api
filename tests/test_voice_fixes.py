@@ -163,6 +163,18 @@ class TestAmbiguityTerms:
         assert "repeat" in result.lower() or "clarify" in result.lower() or "સ્પષ્ટ" in result
         assert "seaweed" in result.lower() or "marine feed" in result.lower()
 
+    @pytest.mark.parametrize("query", [
+        "મારી ભેસ્ટને તાવ છે",
+        "ભંચ દૂધ ઓછું આપે છે",
+        "ભેંચને ખાવાનું બંધ છે",
+    ])
+    def test_buffalo_asr_variants_do_not_become_sheep(self, query):
+        """Common Gujarati ASR variants for ભેંસ should resolve to buffalo, not sheep."""
+        result = get_ambiguity_hints_for_query(query)
+        assert "buffalo" in result.lower()
+        assert "not sheep" in result.lower() or "NOT sheep" in result
+        assert "goat" in result.lower()
+
 # ---------------------------------------------------------------------------
 # Hold message detection tests
 # ---------------------------------------------------------------------------

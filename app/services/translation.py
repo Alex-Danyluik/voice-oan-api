@@ -493,13 +493,20 @@ def _get_glossary_hints_for_gu_query(text: str, max_results: int = 7) -> str:
     scored: list[tuple[str, str, float]] = []
 
     for tp in TERM_PAIRS:
-        gu_lower = tp.gu.lower()
-        translit_lower = tp.transliteration.lower()
+        scores: list[float] = []
+        gu_lower = (tp.gu or "").lower().strip()
+        translit_lower = (tp.transliteration or "").lower().strip()
 
-        # Check substring containment first (fast path)
-        gu_score = 100.0 if gu_lower in text_lower else _fuzz.partial_ratio(gu_lower, text_lower)
-        tr_score = 100.0 if translit_lower in text_lower else _fuzz.partial_ratio(translit_lower, text_lower)
-        best = max(gu_score, tr_score)
+        # Check substring containment first (fast path), ignoring empty fields.
+        if gu_lower:
+            scores.append(100.0 if gu_lower in text_lower else _fuzz.partial_ratio(gu_lower, text_lower))
+        if translit_lower:
+            scores.append(
+                100.0 if translit_lower in text_lower else _fuzz.partial_ratio(translit_lower, text_lower)
+            )
+        if not scores:
+            continue
+        best = max(scores)
 
         if best >= 75:
             scored.append((tp.gu, tp.en, best))

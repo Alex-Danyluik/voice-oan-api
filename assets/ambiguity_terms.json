@@ -142,6 +142,33 @@
   },
   {
     "gu_terms": [
+      "ભેંસ",
+      "ભેંસને",
+      "ભેંસો",
+      "ભેસ",
+      "ભેસને",
+      "ભેંશ",
+      "ભેંશને",
+      "ભૈંસ",
+      "ભૈંસને",
+      "ભૈસ",
+      "ભૈસને",
+      "ભેન્સ",
+      "ભેન્સને",
+      "ભેસ્ટ",
+      "ભેસ્ટને",
+      "ભંચ",
+      "ભંચને",
+      "ભેંચ",
+      "ભેંચને",
+      "ભેન્ચ",
+      "ભેન્ચને"
+    ],
+    "type": "hardcode",
+    "rule": "'ભેંસ' and ASR/spelling variants such as 'ભેસ્ટ', 'ભંચ', and 'ભેંચને' mean buffalo in Gujarati dairy context, NOT sheep or goat. Translate these as Buffalo. The suffix '-ને' is only the Gujarati object marker, not part of the animal name."
+  },
+  {
+    "gu_terms": [
       "ગરમી",
       "ગરમીમાં",
       "ગરમીમાં આવવું",

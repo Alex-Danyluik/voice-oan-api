@@ -345,6 +345,36 @@ class TestHelperCoverage:
         assert "address marker" in prompt
         assert "mark confidence low if the word could also be an address marker" in prompt
 
+    @pytest.mark.parametrize("query", [
+        "મારી ભેસ્ટને તાવ છે",
+        "ભંચ દૂધ ઓછું આપે છે",
+        "ભેંચને ખાવાનું બંધ છે",
+    ])
+    def test_pretranslation_prompt_maps_buffalo_asr_variants(self, query):
+        messages = _build_openai_pretranslation_messages("Gujarati", "gu", query)
+        prompt = messages[0]["content"]
+        assert "Domain-specific disambiguation rules" in prompt
+        assert "mean buffalo" in prompt.lower()
+        assert "NOT sheep" in prompt
+        assert "Translate these as Buffalo" in prompt
+
+    def test_gujarati_glossary_hints_skip_empty_transliteration_matches(self):
+        from app.services.translation import _get_glossary_hints_for_gu_query
+
+        hints = _get_glossary_hints_for_gu_query("મારી ભેસ્ટને તાવ છે")
+        assert "Buffalo" in hints
+        assert "Fever" in hints
+        assert "Acaricide" not in hints
+        assert "Deworming" not in hints
+        assert "Pesticide" not in hints
+        assert "Pre-Partum Prolapse" not in hints
+
+    def test_gujarati_glossary_hints_include_short_buffalo_variant(self):
+        from app.services.translation import _get_glossary_hints_for_gu_query
+
+        hints = _get_glossary_hints_for_gu_query("ભંચ")
+        assert "Buffalo" in hints
+
     def test_core_prompt_requires_professional_detached_gender_neutral_tone(self):
         assert "professional, cordial, detached" in STATIC_VOICE_SYSTEM_PROMPT
         assert "Do not mirror kinship words from the translation" in STATIC_VOICE_SYSTEM_PROMPT
