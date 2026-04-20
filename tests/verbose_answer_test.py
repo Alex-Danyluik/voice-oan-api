@@ -597,7 +597,7 @@ def test_fixture_has_latest_50_single_turn_over_100_word_answers():
     not _env_flag("VOICE_VERBOSE_ANSWER_INTEGRATION"),
     reason="Set VOICE_VERBOSE_ANSWER_INTEGRATION=1 to run live verbose-answer regressions",
 )
-@pytest.mark.parametrize("case", VERBOSE_ANSWER_CASES[:10], ids=_case_id)
+@pytest.mark.parametrize("case", VERBOSE_ANSWER_CASES, ids=_case_id)
 def test_verbose_cases_run_through_voice_pipeline_under_100_words(case, monkeypatch):
     answer = asyncio.run(_collect_live_voice_answer(case, monkeypatch))
     answer_words = _word_count(answer)
